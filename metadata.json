@@ -1,0 +1,6 @@
+{
+  "name": "Jagr",
+  "description": "Jagr is a comprehensive personal tracker for recovery, self-control, and mindfulness.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
