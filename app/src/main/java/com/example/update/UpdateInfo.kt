@@ -2,9 +2,8 @@ package com.example.update
 
 data class UpdateInfo(
     val latestVersion: String,
-    val minimumSupportedVersion: String,
-    val updateTitle: String,
-    val updateMessage: String,
-    val downloadUrl: String,
+    val minimumVersion: String,
+    val releaseNotes: String,
+    val apkUrl: String,
     val forceUpdate: Boolean
 )

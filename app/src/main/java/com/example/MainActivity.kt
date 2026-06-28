@@ -57,17 +57,19 @@ class MainActivity : ComponentActivity() {
             "habit-db"
         ).fallbackToDestructiveMigration().build()
         
-        val repository = HabitRepository(database.habitDao())
+        val repository = HabitRepository(database.habitDao(), database.customHabitDao())
         val viewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return HabitViewModel(repository) as T
             }
         })[HabitViewModel::class.java]
+        
+        viewModel.loadUserProfile(applicationContext)
 
         enableEdgeToEdge()
         setContent {
             val isDark = viewModel.isDarkMode
-            val accentColor = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
+            val accentColor = if (viewModel.accentColorName == "Emerald") Color(0xFF6C63FF) else Color(0xFF10B981)
             
             MyApplicationTheme(darkTheme = isDark, accentColor = accentColor) {
                 Surface(
@@ -76,6 +78,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                     if (viewModel.forceUpdateScreenActive) {
                         com.example.update.ForceUpdateScreen(viewModel)
+                    } else if (!viewModel.isOnboardingCompleted) {
+                        OnboardingScreen(viewModel)
+                    } else if (!viewModel.isLoggedIn) {
+                        LoginScreen(viewModel)
                     } else {
                         HabitTrackerScreen(viewModel)
                     }
@@ -93,15 +99,15 @@ fun HabitTrackerScreen(viewModel: HabitViewModel) {
     LaunchedEffect(records) {
         viewModel.loadTodayLog(records)
     }
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
 
     if (viewModel.showOptionalUpdateDialog) {
         com.example.update.OptionalUpdateDialog(viewModel)
     }
-    val bottomBg = if (isDark) Color(0xFF131C2E) else Color(0xFFFFFFFF)
-    val bottomBorder = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
+    val bottomBg = MaterialTheme.colorScheme.surface
+    val bottomBorder = MaterialTheme.colorScheme.outline
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -126,7 +132,7 @@ fun HabitTrackerScreen(viewModel: HabitViewModel) {
                         NavigationTabItem("Home", Icons.Filled.Home, Icons.Outlined.Home, 0),
                         NavigationTabItem("Calendar", Icons.Filled.DateRange, Icons.Outlined.DateRange, 1),
                         NavigationTabItem("Insights", Icons.Filled.Leaderboard, Icons.Outlined.Leaderboard, 2),
-                        NavigationTabItem("Settings", Icons.Filled.Settings, Icons.Outlined.Settings, 3)
+                        NavigationTabItem("Profile", Icons.Filled.Person, Icons.Outlined.Person, 3)
                     )
 
                     tabs.forEach { tab ->
@@ -170,18 +176,22 @@ fun HabitTrackerScreen(viewModel: HabitViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            AnimatedContent(
-                targetState = viewModel.selectedTab,
-                transitionSpec = {
-                    fadeIn() togetherWith fadeOut()
-                },
-                label = "navigation_screen_transition"
-            ) { targetTab ->
-                when (targetTab) {
-                    0 -> HomeReflectionScreen(viewModel, records)
-                    1 -> CalendarReflectionScreen(viewModel, records)
-                    2 -> InsightsReflectionScreen(viewModel, records)
-                    3 -> SettingsReflectionScreen(viewModel)
+            if (viewModel.showAddHabitScreen) {
+                AddHabitScreen(viewModel) { viewModel.showAddHabitScreen = false }
+            } else {
+                AnimatedContent(
+                    targetState = viewModel.selectedTab,
+                    transitionSpec = {
+                        fadeIn() togetherWith fadeOut()
+                    },
+                    label = "navigation_screen_transition"
+                ) { targetTab ->
+                    when (targetTab) {
+                        0 -> HomeReflectionScreen(viewModel, records)
+                        1 -> CalendarReflectionScreen(viewModel, records)
+                        2 -> InsightsReflectionScreen(viewModel, records)
+                        3 -> SettingsReflectionScreen(viewModel)
+                    }
                 }
             }
         }
@@ -203,12 +213,12 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
     val context = LocalContext.current
     val isDark = viewModel.isDarkMode
     
-    val background = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC)
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
-    val borderStrokeColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val cardBg = if (isDark) Color(0xFF131C2E) else Color.White
+    val background = MaterialTheme.colorScheme.background
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val cardBg = MaterialTheme.colorScheme.surface
 
     var currentDateText by remember { mutableStateOf(getCurrentFormattedDate()) }
     val recoveryScore = remember(records) { calculateRecoveryScore(records) }
@@ -276,7 +286,7 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
                             modifier = Modifier
                                 .size(44.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(if (isDark) Color(0xFF090D16) else Color(0xFFF1F5F9))
+                                .background(MaterialTheme.colorScheme.background)
                                 .border(BorderStroke(1.dp, accentPrimary.copy(alpha = 0.5f)), RoundedCornerShape(12.dp))
                         ) {
                             Image(
@@ -363,46 +373,89 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // TOP CUSTOM HEADER
+                // TOP GREETING HEADER (Matches Activity Mockup Exactly)
                 item {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(top = 8.dp, bottom = 4.dp)
                     ) {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = textPrimary)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = textPrimary)
+                            }
+                            
+                            IconButton(onClick = { showNotificationsDialog = true }) {
+                                Box(contentAlignment = Alignment.TopEnd) {
+                                    Icon(imageVector = Icons.Default.Notifications, contentDescription = "Notifications", tint = textPrimary)
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(top = 2.dp, end = 2.dp)
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(accentPrimary)
+                                    )
+                                }
+                            }
                         }
                         
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "Daily Reflection",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = textPrimary,
-                                fontSize = 18.sp
-                            )
-                            Text(
-                                text = currentDateText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = accentPrimary,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-
-                        Box(contentAlignment = Alignment.TopEnd) {
-                            IconButton(onClick = { showNotificationsDialog = true }) {
-                                Icon(imageVector = Icons.Default.Notifications, contentDescription = "Notifications", tint = textPrimary)
-                            }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        ) {
+                            // Avatar Placeholder with beautiful Emoji or Google Profile Image
                             Box(
                                 modifier = Modifier
-                                    .padding(top = 10.dp, end = 10.dp)
-                                    .size(8.dp)
+                                    .size(52.dp)
                                     .clip(CircleShape)
-                                    .background(accentPrimary)
-                            )
+                                    .background(accentPrimary.copy(alpha = 0.15f))
+                                    .border(1.5.dp, accentPrimary.copy(alpha = 0.3f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (viewModel.loginType == "Google" && viewModel.googleProfilePictureUrl.isNotEmpty()) {
+                                    coil.compose.AsyncImage(
+                                        model = viewModel.googleProfilePictureUrl,
+                                        contentDescription = "Google Profile Picture",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                } else {
+                                    Text(
+                                        text = viewModel.userAvatarEmoji,
+                                        fontSize = 28.sp
+                                    )
+                                }
+                            }
+                            
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Good day, ",
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = textPrimary
+                                    )
+                                    Text(
+                                        text = viewModel.userName,
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Black,
+                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                        color = textPrimary
+                                    )
+                                }
+                                Text(
+                                    text = "Track your daily activity & stay healthy",
+                                    fontSize = 13.sp,
+                                    color = textSecondary
+                                )
+                            }
                         }
                     }
                 }
@@ -420,7 +473,11 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
                                 .fillMaxWidth()
                                 .background(
                                     Brush.linearGradient(
-                                        colors = listOf(Color(0xFF064E3B), Color(0xFF10B981))
+                                        colors = if (viewModel.accentColorName == "Emerald") {
+                                            listOf(Color(0xFF3B2E9F), Color(0xFF6C63FF)) // Gorgeous Purple gradient
+                                        } else {
+                                            listOf(Color(0xFF064E3B), Color(0xFF10B981)) // Green gradient
+                                        }
                                     )
                                 )
                                 .padding(24.dp)
@@ -908,11 +965,11 @@ fun QuestionCheckInCard(
     viewModel: HabitViewModel
 ) {
     val isDark = viewModel.isDarkMode
-    val cardBg = if (isDark) Color(0xFF131C2E) else Color.White
-    val borderStrokeColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
+    val cardBg = MaterialTheme.colorScheme.surface
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
 
     val animatedNoBgColor by animateColorAsState(
         targetValue = if (answer == "No") Color(0xFF10B981) else Color.Transparent,
@@ -1004,7 +1061,7 @@ fun QuestionCheckInCard(
                             .fillMaxWidth()
                             .height(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(if (isDark) Color(0xFF090D16) else Color(0xFFF1F5F9))
+                            .background(MaterialTheme.colorScheme.background)
                             .padding(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -1167,8 +1224,8 @@ fun QuestionCheckInCard(
                                 unfocusedTextColor = textPrimary,
                                 focusedBorderColor = accentPrimary,
                                 unfocusedBorderColor = borderStrokeColor,
-                                focusedContainerColor = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC),
-                                unfocusedContainerColor = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC)
+                                focusedContainerColor = MaterialTheme.colorScheme.background,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.background
                             )
                         )
                     }
@@ -1242,12 +1299,12 @@ fun CalendarReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
     var selectedDateMillis by remember { mutableStateOf<Long?>(System.currentTimeMillis()) }
 
     val isDark = viewModel.isDarkMode
-    val background = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC)
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
-    val borderStrokeColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val cardBg = if (isDark) Color(0xFF131C2E) else Color.White
+    val background = MaterialTheme.colorScheme.background
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val cardBg = MaterialTheme.colorScheme.surface
 
     val selMillis = selectedDateMillis
     val selDateStr = remember(selMillis) {
@@ -2090,12 +2147,12 @@ fun LegendItem(color: Color, label: String, isDark: Boolean) {
 @Composable
 fun InsightsReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) {
     val isDark = viewModel.isDarkMode
-    val background = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC)
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
-    val borderStrokeColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val cardBg = if (isDark) Color(0xFF131C2E) else Color.White
+    val background = MaterialTheme.colorScheme.background
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val cardBg = MaterialTheme.colorScheme.surface
 
     val currentStreak = remember(records) { calculateCurrentStreak(records) }
     val longestStreak = remember(records) { calculateLongestStreak(records) }
@@ -2796,12 +2853,13 @@ fun WeeklyTrendChart(
 fun SettingsReflectionScreen(viewModel: HabitViewModel) {
     val context = LocalContext.current
     val isDark = viewModel.isDarkMode
-    val background = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC)
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
-    val borderStrokeColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val cardBg = if (isDark) Color(0xFF131C2E) else Color.White
+    val background = MaterialTheme.colorScheme.background
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val cardBg = MaterialTheme.colorScheme.surface
+    var showGoogleChooserInSettings by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -2824,11 +2882,213 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
-                    text = "Settings",
+                    text = "Profile & Settings",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = textPrimary
                 )
+            }
+        }
+
+        // USER PROFILE SECTION
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "User Profile",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Interactive Avatar Emoji Selector
+                            val selectedEmoji = viewModel.userAvatarEmoji
+                            Box(
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape)
+                                    .background(accentPrimary.copy(alpha = 0.15f))
+                                    .border(1.5.dp, accentPrimary, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (viewModel.loginType == "Google" && viewModel.googleProfilePictureUrl.isNotEmpty()) {
+                                    coil.compose.AsyncImage(
+                                        model = viewModel.googleProfilePictureUrl,
+                                        contentDescription = "Google Profile Picture",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                } else {
+                                    Text(
+                                        text = selectedEmoji,
+                                        fontSize = 32.sp
+                                    )
+                                }
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                OutlinedTextField(
+                                    value = viewModel.userName,
+                                    onValueChange = { newName ->
+                                        viewModel.updateUserName(context, newName)
+                                    },
+                                    label = { Text("Display Name") },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = accentPrimary,
+                                        unfocusedBorderColor = borderStrokeColor,
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+
+                        // Avatar Emoji Picker
+                        Text(
+                            text = "Choose Avatar Emoji",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = textSecondary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                                          ) {
+                            val emojis = listOf("🙋‍♂️", "🙋‍♀️", "🧑‍💻", "👩‍💻", "👑", "🦄", "🦁", "🦊")
+                            emojis.forEach { emoji ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (viewModel.userAvatarEmoji == emoji) accentPrimary.copy(alpha = 0.2f)
+                                            else Color.Transparent
+                                        )
+                                        .clickable {
+                                            viewModel.updateUserAvatarEmoji(context, emoji)
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = emoji, fontSize = 20.sp)
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = borderStrokeColor.copy(alpha = 0.5f),
+                            thickness = 1.dp
+                        )
+
+                        // Account Information & Logout / Login
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val isGoogleUser = viewModel.loginType == "Google"
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isGoogleUser) "Logged in via Google" else "Guest Mode",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textPrimary
+                                )
+                                Text(
+                                    text = if (isGoogleUser) {
+                                        "ID: ${viewModel.googleUserId.take(16)}${if (viewModel.googleUserId.length > 16) "..." else ""}\n${viewModel.loggedInEmail}"
+                                    } else {
+                                        "Sign in to secure your habits"
+                                    },
+                                    fontSize = 11.sp,
+                                    color = textSecondary,
+                                    lineHeight = 15.sp
+                                )
+                            }
+
+                            if (isGoogleUser) {
+                                Button(
+                                    onClick = {
+                                        viewModel.logout(context)
+                                        Toast.makeText(context, "Logged out successfully", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text(
+                                        text = "Log Out",
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        showGoogleChooserInSettings = true
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(36.dp)
+                                ) {
+                                    Text(
+                                        text = "Log In",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // HABITS SECTION
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Habits",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cardBg),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, borderStrokeColor)
+                ) {
+                    SettingsClickableRow(
+                        label = "Add New Habit",
+                        leadingIcon = Icons.Default.Add,
+                        isDark = isDark,
+                        onClick = { viewModel.showAddHabitScreen = true }
+                    )
+                }
             }
         }
 
@@ -2886,7 +3146,7 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                         // Accent color selection row
                         SettingsInteractiveRow(
                             label = "Accent Color",
-                            value = viewModel.accentColorName,
+                            value = if (viewModel.accentColorName == "Emerald") "Purple" else "Green",
                             onClick = {
                                 viewModel.accentColorName = if (viewModel.accentColorName == "Emerald") "Mint" else "Emerald"
                             },
@@ -3140,7 +3400,7 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                             Spacer(modifier = Modifier.height(6.dp))
                             OutlinedTextField(
                                 value = viewModel.updateCheckUrl,
-                                onValueChange = { viewModel.updateCheckUrl = it },
+                                onValueChange = { viewModel.updateUpdateCheckUrl(context, it) },
                                 modifier = Modifier.fillMaxWidth(),
                                 textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
                                 colors = OutlinedTextFieldDefaults.colors(
@@ -3336,6 +3596,21 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                     color = textSecondary
                 )
             }
+        }
+    }
+
+    if (showGoogleChooserInSettings) {
+        LaunchedEffect(showGoogleChooserInSettings) {
+            showGoogleChooserInSettings = false
+            viewModel.authenticateWithGoogle(
+                context = context,
+                onSuccess = {
+                    Toast.makeText(context, "Successfully logged in as ${viewModel.userName}!", Toast.LENGTH_SHORT).show()
+                },
+                onFailure = { errorMsg ->
+                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                }
+            )
         }
     }
 }

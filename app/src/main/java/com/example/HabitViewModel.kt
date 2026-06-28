@@ -11,9 +11,25 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.example.update.UpdateInfo
 import com.example.update.UpdateResult
+import android.content.Context
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 
 class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     val uiState: StateFlow<List<HabitRecord>> = repository.allRecords
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val customHabits: StateFlow<List<CustomHabit>> = repository.allCustomHabits
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -32,11 +48,7 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     var activeUpdateInfo by mutableStateOf<UpdateInfo?>(null)
     var forceUpdateScreenActive by mutableStateOf(false)
     var showOptionalUpdateDialog by mutableStateOf(false)
-
-    init {
-        // Automatically check for updates on app launch
-        checkForUpdates(manual = false)
-    }
+    var dismissedUpdateVersion by mutableStateOf("")
 
     fun checkForUpdates(manual: Boolean = false) {
         viewModelScope.launch {
@@ -57,24 +69,26 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
                     "OptionalUpdate" -> {
                         val info = UpdateInfo(
                             latestVersion = "1.0.1",
-                            minimumSupportedVersion = "1.0.0",
-                            updateTitle = "New Update Available",
-                            updateMessage = "Bug fixes, AI improvements, dashboard synchronization, and timetable enhancements.",
-                            downloadUrl = "https://github.com/FaheemAnsari/Jagr/releases/download/v1.0.1/jagr-v1.0.1.apk",
+                            minimumVersion = "1.0.0",
+                            releaseNotes = "Bug fixes, AI improvements, dashboard synchronization, and timetable enhancements.",
+                            apkUrl = "https://github.com/FaheemAnsari/Jagr/releases/download/v1.0.1/jagr-v1.0.1.apk",
                             forceUpdate = false
                         )
                         updateResultState = UpdateResult.NewUpdateAvailable(info, false)
                         activeUpdateInfo = info
                         forceUpdateScreenActive = false
-                        showOptionalUpdateDialog = true
+                        if (manual || info.latestVersion != dismissedUpdateVersion) {
+                            showOptionalUpdateDialog = true
+                        } else {
+                            showOptionalUpdateDialog = false
+                        }
                     }
                     "ForceUpdate" -> {
                         val info = UpdateInfo(
                             latestVersion = "1.1.0",
-                            minimumSupportedVersion = "1.1.0",
-                            updateTitle = "New Update Available",
-                            updateMessage = "This version is mandatory for continued secure access. Please update now to secure your logs.",
-                            downloadUrl = "https://github.com/FaheemAnsari/Jagr/releases/download/v1.1.0/jagr-v1.1.0.apk",
+                            minimumVersion = "1.1.0",
+                            releaseNotes = "This version is mandatory for continued secure access. Please update now to secure your logs.",
+                            apkUrl = "https://github.com/FaheemAnsari/Jagr/releases/download/v1.1.0/jagr-v1.1.0.apk",
                             forceUpdate = true
                         )
                         updateResultState = UpdateResult.NewUpdateAvailable(info, true)
@@ -97,7 +111,11 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
                                 showOptionalUpdateDialog = false
                             } else {
                                 forceUpdateScreenActive = false
-                                showOptionalUpdateDialog = true
+                                if (manual || result.updateInfo.latestVersion != dismissedUpdateVersion) {
+                                    showOptionalUpdateDialog = true
+                                } else {
+                                    showOptionalUpdateDialog = false
+                                }
                             }
                         }
                         else -> {
@@ -119,8 +137,255 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
 
     // UI Configuration & Themes
     var selectedTab by mutableStateOf(0)
-    var isDarkMode by mutableStateOf(true) // Start in premium dark mode by default, matches Mockups 4 & 5
+    var showAddHabitScreen by mutableStateOf(false)
+    var isDarkMode by mutableStateOf(false) // Start in gorgeous light/airy Activity theme by default
+    var userName by mutableStateOf("Jerome")
+    var userAvatarEmoji by mutableStateOf("🙋‍♂️")
     var accentColorName by mutableStateOf("Emerald") // Matches Mockup Settings
+
+    fun updateUserName(context: android.content.Context, name: String) {
+        userName = name
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putString("user_name", name)
+            apply()
+        }
+    }
+
+    fun updateUserAvatarEmoji(context: android.content.Context, emoji: String) {
+        userAvatarEmoji = emoji
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putString("user_avatar_emoji", emoji)
+            apply()
+        }
+    }
+
+    fun loadUserProfile(context: android.content.Context) {
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        userName = sharedPref.getString("user_name", "Jerome") ?: "Jerome"
+        userAvatarEmoji = sharedPref.getString("user_avatar_emoji", "🙋‍♂️") ?: "🙋‍♂️"
+        isOnboardingCompleted = sharedPref.getBoolean("is_onboarding_completed", false)
+        isLoggedIn = sharedPref.getBoolean("is_logged_in", false)
+        loggedInEmail = sharedPref.getString("logged_in_email", "") ?: ""
+        loginType = sharedPref.getString("login_type", "") ?: ""
+        googleUserId = sharedPref.getString("google_user_id", "") ?: ""
+        googleProfilePictureUrl = sharedPref.getString("google_profile_picture_url", "") ?: ""
+        dismissedUpdateVersion = sharedPref.getString("dismissed_update_version", "") ?: ""
+        updateCheckUrl = sharedPref.getString("update_check_url", "https://raw.githubusercontent.com/FaheemAnsari/Jagr/main/update.json") ?: "https://raw.githubusercontent.com/FaheemAnsari/Jagr/main/update.json"
+        
+        // Trigger check for updates immediately on app launch (guaranteeing settings are loaded)
+        checkForUpdates(manual = false)
+    }
+
+    fun dismissOptionalUpdate(context: android.content.Context) {
+        showOptionalUpdateDialog = false
+        activeUpdateInfo?.let { info ->
+            dismissedUpdateVersion = info.latestVersion
+            val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+            with (sharedPref.edit()) {
+                putString("dismissed_update_version", info.latestVersion)
+                apply()
+            }
+        }
+    }
+
+    fun updateUpdateCheckUrl(context: android.content.Context, url: String) {
+        updateCheckUrl = url
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putString("update_check_url", url)
+            apply()
+        }
+    }
+
+    var isOnboardingCompleted by mutableStateOf(false)
+    var isLoggedIn by mutableStateOf(false)
+    var loggedInEmail by mutableStateOf("")
+    var loginType by mutableStateOf("") // "Google" or "Guest"
+    var googleUserId by mutableStateOf("")
+    var googleProfilePictureUrl by mutableStateOf("")
+    var isAuthenticating by mutableStateOf(false)
+    var authenticationError by mutableStateOf<String?>(null)
+
+    fun completeOnboarding(context: android.content.Context) {
+        isOnboardingCompleted = true
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putBoolean("is_onboarding_completed", true)
+            apply()
+        }
+    }
+
+    fun authenticateWithGoogle(
+        context: android.content.Context,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            isAuthenticating = true
+            authenticationError = null
+            try {
+                // Safely read from BuildConfig without forcing a compile-time failure
+                val rawClientId = try {
+                    val buildConfigClass = Class.forName("com.example.BuildConfig")
+                    val field = buildConfigClass.getField("GOOGLE_WEB_CLIENT_ID")
+                    field.get(null) as? String ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+                
+                val clientId = if (rawClientId.isBlank() || rawClientId == "YOUR_GOOGLE_WEB_CLIENT_ID") {
+                    // Fallback client ID so that it doesn't fail compilation or execution, but triggers standard sign-in prompt
+                    "1079547613754-dummyclientid123456.apps.googleusercontent.com"
+                } else {
+                    rawClientId
+                }
+
+                val credentialManager = CredentialManager.create(context)
+
+                val googleIdOption = GetGoogleIdOption.Builder()
+                    .setFilterByAuthorizedAccounts(false)
+                    .setServerClientId(clientId)
+                    .setAutoSelectEnabled(false)
+                    .build()
+
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+
+                val result = credentialManager.getCredential(
+                    context = context,
+                    request = request
+                )
+
+                val credential = result.credential
+                if (credential is androidx.credentials.CustomCredential && 
+                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    
+                    val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                    val email = googleIdTokenCredential.id
+                    val displayName = googleIdTokenCredential.displayName ?: "Google User"
+                    val photoUrl = googleIdTokenCredential.profilePictureUri?.toString() ?: ""
+                    
+                    val subId = try {
+                        googleIdTokenCredential.id
+                    } catch (e: Exception) {
+                        email
+                    }
+
+                    saveGoogleProfile(context, subId, email, displayName, photoUrl)
+                    isAuthenticating = false
+                    onSuccess()
+                } else {
+                    isAuthenticating = false
+                    onFailure("Received invalid credential type from Google")
+                }
+            } catch (e: GetCredentialCancellationException) {
+                isAuthenticating = false
+                onFailure("Sign-in cancelled")
+            } catch (e: GetCredentialUnsupportedException) {
+                isAuthenticating = false
+                onFailure("Google Play Services or Credential Manager is not supported on this device")
+            } catch (e: GetCredentialException) {
+                isAuthenticating = false
+                val msg = e.message ?: "Authentication failed"
+                if (msg.contains("No credential", ignoreCase = true)) {
+                    onFailure("No Google accounts found or Google Play Services is outdated")
+                } else {
+                    onFailure(msg)
+                }
+            } catch (e: Exception) {
+                isAuthenticating = false
+                onFailure(e.localizedMessage ?: "An unexpected error occurred during Google Sign-In")
+            }
+        }
+    }
+
+    fun saveGoogleProfile(
+        context: android.content.Context,
+        userId: String,
+        email: String,
+        name: String,
+        photoUrl: String
+    ) {
+        isLoggedIn = true
+        loggedInEmail = email
+        loginType = "Google"
+        userName = name
+        googleUserId = userId
+        googleProfilePictureUrl = photoUrl
+        
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putBoolean("is_logged_in", true)
+            putString("logged_in_email", email)
+            putString("login_type", "Google")
+            putString("user_name", name)
+            putString("google_user_id", userId)
+            putString("google_profile_picture_url", photoUrl)
+            apply()
+        }
+    }
+
+    fun loginWithGoogle(context: android.content.Context, email: String, name: String) {
+        isLoggedIn = true
+        loggedInEmail = email
+        loginType = "Google"
+        userName = name
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putBoolean("is_logged_in", true)
+            putString("logged_in_email", email)
+            putString("login_type", "Google")
+            putString("user_name", name)
+            apply()
+        }
+    }
+
+    fun loginAsGuest(context: android.content.Context) {
+        isLoggedIn = true
+        loggedInEmail = "guest@jagr.app"
+        loginType = "Guest"
+        userName = "Guest User"
+        userAvatarEmoji = "🦊"
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putBoolean("is_logged_in", true)
+            putString("logged_in_email", "guest@jagr.app")
+            putString("login_type", "Guest")
+            putString("user_name", "Guest User")
+            putString("user_avatar_emoji", "🦊")
+            apply()
+        }
+    }
+
+    fun logout(context: android.content.Context) {
+        isLoggedIn = false
+        loggedInEmail = ""
+        loginType = ""
+        googleUserId = ""
+        googleProfilePictureUrl = ""
+        
+        viewModelScope.launch {
+            try {
+                val credentialManager = CredentialManager.create(context)
+                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            } catch (e: Exception) {
+                // Ignore clear state failure
+            }
+        }
+
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putBoolean("is_logged_in", false)
+            putString("logged_in_email", "")
+            putString("login_type", "")
+            putString("google_user_id", "")
+            putString("google_profile_picture_url", "")
+            apply()
+        }
+    }
     var isFingerprintEnabled by mutableStateOf(true)
     var isPinLockEnabled by mutableStateOf(true)
     var dailyReminderTime by mutableStateOf("9:00 PM")
@@ -160,6 +425,18 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     fun addRecord(activityType: String, count: Int, duration: Int) {
         viewModelScope.launch {
             repository.insert(HabitRecord(activityType = activityType, count = count, durationMinutes = duration))
+        }
+    }
+
+    fun addCustomHabit(title: String, description: String) {
+        viewModelScope.launch {
+            repository.insertCustomHabit(CustomHabit(title = title, description = description))
+        }
+    }
+
+    fun deleteCustomHabit(habitId: Int) {
+        viewModelScope.launch {
+            repository.deleteCustomHabit(habitId)
         }
     }
 

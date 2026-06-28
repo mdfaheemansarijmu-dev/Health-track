@@ -1,0 +1,7 @@
+{
+  "latestVersion": "1.1.0",
+  "minimumVersion": "1.0.0",
+  "forceUpdate": false,
+  "apkUrl": "https://github.com/FaheemAnsari/Jagr/releases/download/v1.1.0/jagr-v1.1.0.apk",
+  "releaseNotes": "Introduced the premium GitHub update system, custom adaptive app icons, responsive styling class, secure credentials, and Room persistence optimizations."
+}

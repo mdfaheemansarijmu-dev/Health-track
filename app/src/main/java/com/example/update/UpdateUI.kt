@@ -45,7 +45,7 @@ fun OptionalUpdateDialog(viewModel: HabitViewModel) {
     val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
 
     Dialog(
-        onDismissRequest = { viewModel.showOptionalUpdateDialog = false },
+        onDismissRequest = { viewModel.dismissOptionalUpdate(context) },
         properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = false)
     ) {
         Card(
@@ -75,7 +75,7 @@ fun OptionalUpdateDialog(viewModel: HabitViewModel) {
 
                 // Custom message if present
                 Text(
-                    text = info.updateTitle,
+                    text = "Version ${info.latestVersion} is available!",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                     color = accentPrimary,
@@ -141,7 +141,7 @@ fun OptionalUpdateDialog(viewModel: HabitViewModel) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = info.updateMessage,
+                        text = info.releaseNotes,
                         style = MaterialTheme.typography.bodySmall,
                         color = textSecondary,
                         lineHeight = 16.sp
@@ -157,7 +157,7 @@ fun OptionalUpdateDialog(viewModel: HabitViewModel) {
                 ) {
                     // Later Button
                     OutlinedButton(
-                        onClick = { viewModel.showOptionalUpdateDialog = false },
+                        onClick = { viewModel.dismissOptionalUpdate(context) },
                         modifier = Modifier.weight(1f),
                         border = BorderStroke(1.dp, borderStrokeColor),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = textPrimary),
@@ -169,8 +169,8 @@ fun OptionalUpdateDialog(viewModel: HabitViewModel) {
                     // Update Now Button
                     Button(
                         onClick = {
-                            viewModel.showOptionalUpdateDialog = false
-                            openDownloadUrl(context, info.downloadUrl)
+                            viewModel.dismissOptionalUpdate(context)
+                            openDownloadUrl(context, info.apkUrl)
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
@@ -190,12 +190,12 @@ fun ForceUpdateScreen(viewModel: HabitViewModel) {
     val context = LocalContext.current
     val isDark = viewModel.isDarkMode
 
-    val background = if (isDark) Color(0xFF090D16) else Color(0xFFF8FAFC)
-    val cardBg = if (isDark) Color(0xFF131C2E) else Color.White
-    val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
-    val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
-    val borderStrokeColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-    val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
+    val background = MaterialTheme.colorScheme.background
+    val cardBg = MaterialTheme.colorScheme.surface
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val accentPrimary = MaterialTheme.colorScheme.primary
 
     Box(
         modifier = Modifier
@@ -311,7 +311,7 @@ fun ForceUpdateScreen(viewModel: HabitViewModel) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = info.updateMessage,
+                        text = info.releaseNotes,
                         style = MaterialTheme.typography.bodySmall,
                         color = textSecondary,
                         lineHeight = 16.sp
@@ -322,7 +322,7 @@ fun ForceUpdateScreen(viewModel: HabitViewModel) {
 
                 // Only Update Now button (non-dismissible)
                 Button(
-                    onClick = { openDownloadUrl(context, info.downloadUrl) },
+                    onClick = { openDownloadUrl(context, info.apkUrl) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(54.dp),

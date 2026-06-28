@@ -39,24 +39,40 @@ class HttpUpdateService : UpdateService {
                 
                 val json = JSONObject(response.toString())
                 val latestVersion = json.getString("latestVersion")
-                val minimumSupportedVersion = json.getString("minimumSupportedVersion")
-                val updateTitle = json.getString("updateTitle")
-                val updateMessage = json.getString("updateMessage")
-                val downloadUrl = json.getString("downloadUrl")
+                val minimumVersion = if (json.has("minimumVersion")) {
+                    json.getString("minimumVersion")
+                } else if (json.has("minimumSupportedVersion")) {
+                    json.getString("minimumSupportedVersion")
+                } else {
+                    "1.0.0"
+                }
+                val releaseNotes = if (json.has("releaseNotes")) {
+                    json.getString("releaseNotes")
+                } else if (json.has("updateMessage")) {
+                    json.getString("updateMessage")
+                } else {
+                    json.optString("updateTitle", "New features and bug fixes")
+                }
+                val apkUrl = if (json.has("apkUrl")) {
+                    json.getString("apkUrl")
+                } else if (json.has("downloadUrl")) {
+                    json.getString("downloadUrl")
+                } else {
+                    ""
+                }
                 val forceUpdate = json.optBoolean("forceUpdate", false)
                 
                 val updateInfo = UpdateInfo(
                     latestVersion = latestVersion,
-                    minimumSupportedVersion = minimumSupportedVersion,
-                    updateTitle = updateTitle,
-                    updateMessage = updateMessage,
-                    downloadUrl = downloadUrl,
+                    minimumVersion = minimumVersion,
+                    releaseNotes = releaseNotes,
+                    apkUrl = apkUrl,
                     forceUpdate = forceUpdate
                 )
                 
                 val isNewer = compareVersions(currentVersion, latestVersion) < 0
                 if (isNewer) {
-                    val mustForce = forceUpdate || compareVersions(currentVersion, minimumSupportedVersion) < 0
+                    val mustForce = forceUpdate || compareVersions(currentVersion, minimumVersion) < 0
                     UpdateResult.NewUpdateAvailable(updateInfo, mustForce)
                 } else {
                     UpdateResult.UpToDate
