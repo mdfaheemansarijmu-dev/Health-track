@@ -74,7 +74,11 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    HabitTrackerScreen(viewModel)
+                    if (viewModel.forceUpdateScreenActive) {
+                        com.example.update.ForceUpdateScreen(viewModel)
+                    } else {
+                        HabitTrackerScreen(viewModel)
+                    }
                 }
             }
         }
@@ -85,9 +89,17 @@ class MainActivity : ComponentActivity() {
 fun HabitTrackerScreen(viewModel: HabitViewModel) {
     val records by viewModel.uiState.collectAsStateWithLifecycle()
     val isDark = viewModel.isDarkMode
+
+    LaunchedEffect(records) {
+        viewModel.loadTodayLog(records)
+    }
     val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
     val textPrimary = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
     val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+
+    if (viewModel.showOptionalUpdateDialog) {
+        com.example.update.OptionalUpdateDialog(viewModel)
+    }
     val bottomBg = if (isDark) Color(0xFF131C2E) else Color(0xFFFFFFFF)
     val bottomBorder = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
 
@@ -206,10 +218,24 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
             "No Logs\nYet"
         } else {
             when {
-                recoveryScore >= 90 -> "Excellent\nProgress"
-                recoveryScore >= 75 -> "Great\nProgress"
+                recoveryScore == 100 -> "Excellent\nProgress"
+                recoveryScore >= 80 -> "Good\nProgress"
                 recoveryScore >= 60 -> "Steady\nProgress"
-                else -> "Keep\nTrying"
+                recoveryScore >= 20 -> "Needs\nImprovement"
+                else -> "High\nRisk"
+            }
+        }
+    }
+    val recoveryMessage = remember(recoveryScore) {
+        if (records.isEmpty()) {
+            "Start logging your daily progress to track your recovery."
+        } else {
+            when {
+                recoveryScore == 100 -> "Outstanding! You had a perfect clean day."
+                recoveryScore >= 80 -> "Great job! A minor challenge, but you handled it well."
+                recoveryScore >= 60 -> "Keep going, every step counts in your recovery journey."
+                recoveryScore >= 20 -> "Stay strong! Identify your triggers and keep trying."
+                else -> "Today wasn't your best day. Tomorrow is a new opportunity to improve."
             }
         }
     }
@@ -450,7 +476,7 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Keep going, you're doing great!",
+                                        text = recoveryMessage,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.8f)
                                     )
@@ -888,6 +914,28 @@ fun QuestionCheckInCard(
     val textSecondary = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
     val accentPrimary = if (viewModel.accentColorName == "Emerald") Color(0xFF10B981) else Color(0xFF2DD4BF)
 
+    val animatedNoBgColor by animateColorAsState(
+        targetValue = if (answer == "No") Color(0xFF10B981) else Color.Transparent,
+        animationSpec = tween(durationMillis = 200),
+        label = "no_bg_color"
+    )
+    val animatedNoTextColor by animateColorAsState(
+        targetValue = if (answer == "No") Color.White else textSecondary,
+        animationSpec = tween(durationMillis = 200),
+        label = "no_text_color"
+    )
+
+    val animatedYesBgColor by animateColorAsState(
+        targetValue = if (answer == "Yes") Color(0xFFEF4444) else Color.Transparent,
+        animationSpec = tween(durationMillis = 200),
+        label = "yes_bg_color"
+    )
+    val animatedYesTextColor by animateColorAsState(
+        targetValue = if (answer == "Yes") Color.White else textSecondary,
+        animationSpec = tween(durationMillis = 200),
+        label = "yes_text_color"
+    )
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -967,13 +1015,13 @@ fun QuestionCheckInCard(
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(if (answer == "No") Color.White else Color.Transparent)
+                                .background(animatedNoBgColor)
                                 .clickable { onAnswerChange("No") }
                         ) {
                             Text(
                                 text = "No",
                                 fontWeight = FontWeight.Bold,
-                                color = if (answer == "No") Color(0xFF0F172A) else textSecondary
+                                color = animatedNoTextColor
                             )
                         }
 
@@ -984,13 +1032,13 @@ fun QuestionCheckInCard(
                                 .weight(1f)
                                 .fillMaxHeight()
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(if (answer == "Yes") accentPrimary else Color.Transparent)
+                                .background(animatedYesBgColor)
                                 .clickable { onAnswerChange("Yes") }
                         ) {
                             Text(
                                 text = "Yes",
                                 fontWeight = FontWeight.Bold,
-                                color = if (answer == "Yes") Color.White else textSecondary
+                                color = animatedYesTextColor
                             )
                         }
                     }
@@ -1621,158 +1669,249 @@ fun getCurrentFormattedDate(): String {
     return sdf.format(Date())
 }
 
+fun calculateSingleDayScore(dayRecords: List<HabitRecord>): Int {
+    val hasMasturbation = dayRecords.any { it.activityType == "Masturbation" && it.count > 0 }
+    val hasPorn = dayRecords.any { it.activityType == "Pornography" && it.count > 0 }
+    val hasThoughts = dayRecords.any { it.activityType == "Dirty Thoughts" && it.count > 0 }
+    val hasUrge = dayRecords.any { it.activityType == "Urge" && it.count > 0 }
+    
+    val masturbationCount = dayRecords.filter { it.activityType == "Masturbation" }.sumOf { it.count }
+    val pornCount = dayRecords.filter { it.activityType == "Pornography" }.sumOf { it.count }
+    val urgeCount = dayRecords.filter { it.activityType == "Urge" }.sumOf { it.count }
+    
+    var score = 100
+    
+    if (hasMasturbation) {
+        score -= 25 * maxOf(1, masturbationCount)
+    }
+    if (hasPorn) {
+        score -= 25 * maxOf(1, pornCount)
+    }
+    if (hasUrge) {
+        score -= 15 * maxOf(1, urgeCount)
+    }
+    
+    // Negative thoughts coming has 0 negative mark
+    // If negative thoughts came, but user did not masturbate and did not watch porn, add +2 points
+    if (hasThoughts && !hasMasturbation && !hasPorn) {
+        score += 2
+    }
+    
+    return maxOf(0, minOf(100, score))
+}
+
 fun calculateCurrentStreak(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
-    val slips = records.filter { 
-        (it.activityType == "Masturbation" || it.activityType == "Pornography") && it.count > 0 
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    val todayCal = java.util.Calendar.getInstance()
+    val todayStr = sdf.format(todayCal.time)
+    
+    val yesterdayCal = java.util.Calendar.getInstance()
+    yesterdayCal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+    val yesterdayStr = sdf.format(yesterdayCal.time)
+    
+    // Start checking from today or yesterday
+    var startCal = java.util.Calendar.getInstance()
+    if (!groupedByDay.containsKey(todayStr)) {
+        // If today has no logs, see if we can start from yesterday
+        if (groupedByDay.containsKey(yesterdayStr)) {
+            startCal = yesterdayCal
+        } else {
+            return 0 // No logs today or yesterday means streak is 0
+        }
     }
-    if (slips.isEmpty()) {
-        val earliest = records.minOf { it.timestamp }
-        val diffMs = System.currentTimeMillis() - earliest
-        val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-        return days + 1
+    
+    var streak = 0
+    val maxIterations = 365 // prevent infinite loops
+    for (i in 0 until maxIterations) {
+        val dayStr = sdf.format(startCal.time)
+        val dayRecords = groupedByDay[dayStr]
+        if (dayRecords == null || dayRecords.isEmpty()) {
+            break // Gap in logging breaks the streak
+        }
+        
+        val hasMasturbation = dayRecords.any { it.activityType == "Masturbation" && it.count > 0 }
+        val hasPorn = dayRecords.any { it.activityType == "Pornography" && it.count > 0 }
+        
+        if (hasMasturbation || hasPorn) {
+            break // A slip breaks the streak
+        }
+        
+        streak++
+        startCal.add(java.util.Calendar.DAY_OF_YEAR, -1)
     }
-    val mostRecentSlipTime = slips.maxOf { it.timestamp }
-    val diffMs = System.currentTimeMillis() - mostRecentSlipTime
-    val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-    return maxOf(0, days)
+    return streak
 }
 
 fun calculateLongestStreak(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
-    val slips = records.filter { 
-        (it.activityType == "Masturbation" || it.activityType == "Pornography") && it.count > 0 
-    }.sortedBy { it.timestamp }
-
-    if (slips.isEmpty()) {
-        val earliest = records.minOf { it.timestamp }
-        val diffMs = System.currentTimeMillis() - earliest
-        val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-        return days + 1
-    }
-
-    val earliestTime = records.minOf { it.timestamp }
-    var longestDays = 0
-
-    // Gap from earliest record to first slip
-    val firstSlipTime = slips.first().timestamp
-    val firstGapDays = ((firstSlipTime - earliestTime) / (1000 * 60 * 60 * 24)).toInt()
-    if (firstGapDays > longestDays) {
-        longestDays = firstGapDays
-    }
-
-    // Gaps between consecutive slips
-    for (i in 0 until slips.size - 1) {
-        val gapMs = slips[i + 1].timestamp - slips[i].timestamp
-        val gapDays = (gapMs / (1000 * 60 * 60 * 24)).toInt()
-        if (gapDays > longestDays) {
-            longestDays = gapDays
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    // Sort all logged dates
+    val loggedDates = groupedByDay.keys.sorted()
+    if (loggedDates.isEmpty()) return 0
+    
+    var longest = 0
+    var current = 0
+    var previousDateCal: java.util.Calendar? = null
+    
+    for (dateStr in loggedDates) {
+        val dayRecords = groupedByDay[dateStr] ?: continue
+        val hasMasturbation = dayRecords.any { it.activityType == "Masturbation" && it.count > 0 }
+        val hasPorn = dayRecords.any { it.activityType == "Pornography" && it.count > 0 }
+        val isClean = !hasMasturbation && !hasPorn
+        
+        if (isClean) {
+            val curCal = java.util.Calendar.getInstance()
+            val parsedDate = sdf.parse(dateStr) ?: continue
+            curCal.time = parsedDate
+            
+            if (previousDateCal == null) {
+                current = 1
+            } else {
+                // Check if it is exactly the next day
+                val tempCal = java.util.Calendar.getInstance()
+                tempCal.time = previousDateCal.time
+                tempCal.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                val expectedNextStr = sdf.format(tempCal.time)
+                if (dateStr == expectedNextStr) {
+                    current++
+                } else {
+                    current = 1 // Gap broke the streak, restart at 1
+                }
+            }
+            previousDateCal = curCal
+            if (current > longest) {
+                longest = current
+            }
+        } else {
+            current = 0
+            previousDateCal = null
         }
     }
-
-    // Gap from last slip to now
-    val lastSlipTime = slips.last().timestamp
-    val lastGapDays = ((System.currentTimeMillis() - lastSlipTime) / (1000 * 60 * 60 * 24)).toInt()
-    if (lastGapDays > longestDays) {
-        longestDays = lastGapDays
-    }
-
-    return longestDays
+    return longest
 }
 
 fun calculatePornFreeDays(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
-    val slips = records.filter { it.activityType == "Pornography" && it.count > 0 }
-    if (slips.isEmpty()) {
-        val earliest = records.minOf { it.timestamp }
-        val diffMs = System.currentTimeMillis() - earliest
-        val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-        return days + 1
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    var count = 0
+    for ((_, dayRecords) in groupedByDay) {
+        val hasPorn = dayRecords.any { it.activityType == "Pornography" && it.count > 0 }
+        if (!hasPorn) {
+            count++
+        }
     }
-    val mostRecentSlipTime = slips.maxOf { it.timestamp }
-    val diffMs = System.currentTimeMillis() - mostRecentSlipTime
-    val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-    return maxOf(0, days)
+    return count
 }
 
 fun calculateMasturbationFreeDays(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
-    val slips = records.filter { it.activityType == "Masturbation" && it.count > 0 }
-    if (slips.isEmpty()) {
-        val earliest = records.minOf { it.timestamp }
-        val diffMs = System.currentTimeMillis() - earliest
-        val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-        return days + 1
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    var count = 0
+    for ((_, dayRecords) in groupedByDay) {
+        val hasMasturbation = dayRecords.any { it.activityType == "Masturbation" && it.count > 0 }
+        if (!hasMasturbation) {
+            count++
+        }
     }
-    val mostRecentSlipTime = slips.maxOf { it.timestamp }
-    val diffMs = System.currentTimeMillis() - mostRecentSlipTime
-    val days = (diffMs / (1000 * 60 * 60 * 24)).toInt()
-    return maxOf(0, days)
+    return count
 }
 
 fun calculateRecoveryScore(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
     val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24 * 60 * 60 * 1000)
-    val recentSlips = records.filter { 
-        it.timestamp >= thirtyDaysAgo && 
-        (it.activityType == "Masturbation" || it.activityType == "Pornography") && 
-        it.count > 0 
+    
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    val recentRecords = records.filter { it.timestamp >= thirtyDaysAgo }
+    val groupedByDay = recentRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    if (groupedByDay.isEmpty()) return 0
+    
+    var totalScore = 0
+    for ((_, dayRecords) in groupedByDay) {
+        totalScore += calculateSingleDayScore(dayRecords)
     }
-    var score = 100
-    recentSlips.forEach { slip ->
-        val weight = if (slip.activityType == "Pornography") 10 else 7
-        score -= weight * slip.count
-    }
-    return maxOf(0, minOf(100, score))
+    return totalScore / groupedByDay.size
 }
 
 fun calculateRecoveryScoreForTime(records: List<HabitRecord>, endTime: Long): Int {
+    if (records.isEmpty()) return 0
     val thirtyDaysBefore = endTime - (30L * 24 * 60 * 60 * 1000)
-    val recentSlips = records.filter { 
-        it.timestamp in thirtyDaysBefore..endTime && 
-        (it.activityType == "Masturbation" || it.activityType == "Pornography") && 
-        it.count > 0 
+    
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+    val recentRecords = records.filter { it.timestamp in thirtyDaysBefore..endTime }
+    val groupedByDay = recentRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    if (groupedByDay.isEmpty()) return 0
+    
+    var totalScore = 0
+    for ((_, dayRecords) in groupedByDay) {
+        totalScore += calculateSingleDayScore(dayRecords)
     }
-    var score = 100
-    recentSlips.forEach { slip ->
-        val weight = if (slip.activityType == "Pornography") 10 else 7
-        score -= weight * slip.count
-    }
-    return maxOf(0, minOf(100, score))
+    return totalScore / groupedByDay.size
 }
 
 fun calculateRecoveryScoreTrend(records: List<HabitRecord>): List<Float> {
-    if (records.isEmpty()) return emptyList()
     val trend = mutableListOf<Float>()
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
     val now = System.currentTimeMillis()
     val oneDayMs = 24L * 60 * 60 * 1000
+    
+    val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
     // Generate scores for the last 7 days (including today)
     for (i in 6 downTo 0) {
         val targetTime = now - (i * oneDayMs)
-        trend.add(calculateRecoveryScoreForTime(records, targetTime).toFloat())
+        val dayStr = sdf.format(java.util.Date(targetTime))
+        val dayRecords = groupedByDay[dayStr]
+        
+        val dayScore = if (dayRecords != null && dayRecords.isNotEmpty()) {
+            calculateSingleDayScore(dayRecords)
+        } else {
+            if (records.isEmpty()) 0 else 100
+        }
+        trend.add(dayScore.toFloat())
     }
     return trend
 }
 
 fun calculateWeeklyImprovement(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
+    val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
     val now = System.currentTimeMillis()
     val oneDayMs = 24L * 60 * 60 * 1000
     
-    // This week average score (last 7 days)
-    var thisWeekSum = 0
-    for (i in 0 until 7) {
-        thisWeekSum += calculateRecoveryScoreForTime(records, now - (i * oneDayMs))
+    val thisWeekStart = now - (7L * oneDayMs)
+    val lastWeekStart = now - (14L * oneDayMs)
+    
+    // This week records
+    val thisWeekRecords = records.filter { it.timestamp in thisWeekStart..now }
+    val thisWeekGrouped = thisWeekRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    // Last week records
+    val lastWeekRecords = records.filter { it.timestamp in lastWeekStart until thisWeekStart }
+    val lastWeekGrouped = lastWeekRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    
+    val thisWeekAvg = if (thisWeekGrouped.isNotEmpty()) {
+        thisWeekGrouped.map { calculateSingleDayScore(it.value) }.average().toInt()
+    } else {
+        100
     }
-    val thisWeekAvg = thisWeekSum / 7
-
-    // Last week average score (days 7 to 14 ago)
-    var lastWeekSum = 0
-    for (i in 7 until 14) {
-        lastWeekSum += calculateRecoveryScoreForTime(records, now - (i * oneDayMs))
+    
+    val lastWeekAvg = if (lastWeekGrouped.isNotEmpty()) {
+        lastWeekGrouped.map { calculateSingleDayScore(it.value) }.average().toInt()
+    } else {
+        100
     }
-    val lastWeekAvg = lastWeekSum / 7
-
+    
     return thisWeekAvg - lastWeekAvg
 }
 
@@ -1817,8 +1956,8 @@ fun calculateMoodTrend(records: List<HabitRecord>): String {
 data class ActiveTimeResult(val timeBlock: String, val percentageStr: String)
 
 fun calculateActiveTime(records: List<HabitRecord>): ActiveTimeResult {
-    val logs = records.filter { it.activityType != "Mood" && it.activityType != "JournalNote" }
-    if (logs.isEmpty()) return ActiveTimeResult("No logs yet", "0% of urges")
+    val logs = records.filter { it.activityType != "Mood" && it.activityType != "JournalNote" && !it.activityType.startsWith("Trigger:") }
+    if (logs.isEmpty()) return ActiveTimeResult("No logs yet", "0% of logs")
     
     val hourCounts = IntArray(24)
     logs.forEach { log ->
@@ -1860,35 +1999,59 @@ fun calculateActiveTime(records: List<HabitRecord>): ActiveTimeResult {
 data class TriggerPercent(val label: String, val percent: String, val percentFloat: Float, val color: Color)
 
 fun calculateTriggerStatistics(records: List<HabitRecord>): List<TriggerPercent> {
-    val totalSlips = records.filter { 
-        (it.activityType == "Masturbation" || it.activityType == "Pornography") && it.count > 0 
-    }.size
-    val totalUrges = records.filter { it.activityType == "Urge" && it.count > 0 }.size
-    val totalThoughts = records.filter { it.activityType == "Dirty Thoughts" && it.count > 0 }.size
+    val triggerRecords = records.filter { it.activityType.startsWith("Trigger:") }
+    val colors = listOf(
+        Color(0xFFEF4444),
+        Color(0xFFF97316),
+        Color(0xFFF59E0B),
+        Color(0xFF64748B),
+        Color(0xFF3B82F6),
+        Color(0xFF10B981)
+    )
     
-    val sum = totalSlips + totalUrges + totalThoughts
-    if (sum == 0) {
+    val totalTriggersCount = triggerRecords.size
+    if (totalTriggersCount == 0) {
+        val totalSlips = records.filter { (it.activityType == "Masturbation" || it.activityType == "Pornography") && it.count > 0 }.size
+        val totalUrges = records.filter { it.activityType == "Urge" && it.count > 0 }.size
+        val totalThoughts = records.filter { it.activityType == "Dirty Thoughts" && it.count > 0 }.size
+        val fallbackTotal = totalSlips + totalUrges + totalThoughts
+        if (fallbackTotal == 0) {
+            return listOf(
+                TriggerPercent("Porn", "0%", 0f, colors[0]),
+                TriggerPercent("Urge", "0%", 0f, colors[1]),
+                TriggerPercent("Stress", "0%", 0f, colors[2]),
+                TriggerPercent("Boredom", "0%", 0f, colors[3]),
+                TriggerPercent("Other", "0%", 0f, colors[5])
+            )
+        }
+        val pornPct = (totalSlips.toFloat() / fallbackTotal * 100).toInt()
+        val urgePct = (totalUrges.toFloat() / fallbackTotal * 100).toInt()
+        val thoughtsPct = (totalThoughts.toFloat() / fallbackTotal * 100).toInt()
+        val stressPct = maxOf(0, (100 - pornPct - urgePct - thoughtsPct) / 2)
+        val otherPct = maxOf(0, 100 - pornPct - urgePct - thoughtsPct - stressPct)
         return listOf(
-            TriggerPercent("Porn", "0%", 0f, Color(0xFFEF4444)),
-            TriggerPercent("Urge", "0%", 0f, Color(0xFFF97316)),
-            TriggerPercent("Stress", "0%", 0f, Color(0xFFF59E0B)),
-            TriggerPercent("Boredom", "0%", 0f, Color(0xFF64748B)),
-            TriggerPercent("Other", "0%", 0f, Color(0xFF10B981))
+            TriggerPercent("Porn", "$pornPct%", pornPct.toFloat(), colors[0]),
+            TriggerPercent("Urge", "$urgePct%", urgePct.toFloat(), colors[1]),
+            TriggerPercent("Stress", "$stressPct%", stressPct.toFloat(), colors[2]),
+            TriggerPercent("Other", "$otherPct%", otherPct.toFloat(), colors[5])
         )
     }
     
-    val pornPct = (totalSlips.toFloat() / sum * 100).toInt()
-    val urgePct = (totalUrges.toFloat() / sum * 100).toInt()
-    val thoughtsPct = (totalThoughts.toFloat() / sum * 100).toInt()
-    val stressPct = maxOf(0, (100 - pornPct - urgePct - thoughtsPct) / 2)
-    val otherPct = maxOf(0, 100 - pornPct - urgePct - thoughtsPct - stressPct)
+    val countsMap = triggerRecords
+        .map { it.activityType.substringAfter("Trigger:") }
+        .groupBy { it }
+        .mapValues { it.value.size }
+        
+    val result = mutableListOf<TriggerPercent>()
+    val sortedTriggers = countsMap.entries.sortedByDescending { it.value }
+    val sum = countsMap.values.sum()
     
-    return listOf(
-        TriggerPercent("Porn", "$pornPct%", pornPct.toFloat(), Color(0xFFEF4444)),
-        TriggerPercent("Urge", "$urgePct%", urgePct.toFloat(), Color(0xFFF97316)),
-        TriggerPercent("Stress", "$stressPct%", stressPct.toFloat(), Color(0xFFF59E0B)),
-        TriggerPercent("Other", "$otherPct%", otherPct.toFloat(), Color(0xFF10B981))
-    )
+    sortedTriggers.forEachIndexed { idx, entry ->
+        val pct = if (sum > 0) (entry.value.toFloat() / sum * 100).toInt() else 0
+        val color = colors[idx % colors.size]
+        result.add(TriggerPercent(entry.key, "$pct%", pct.toFloat(), color))
+    }
+    return result
 }
 
 // Helpers for calendar calculation
@@ -1945,10 +2108,11 @@ fun InsightsReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
             "No Logs"
         } else {
             when {
-                recoveryScore >= 90 -> "Excellent"
-                recoveryScore >= 75 -> "Great"
+                recoveryScore == 100 -> "Excellent"
+                recoveryScore >= 80 -> "Good"
                 recoveryScore >= 60 -> "Steady"
-                else -> "Improving"
+                recoveryScore >= 20 -> "Needs Improvement"
+                else -> "High Risk"
             }
         }
     }
@@ -2853,11 +3017,273 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
             }
         }
 
+        // ABOUT & UPDATES SECTION
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "About & Updates",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        // About description
+                        Text(
+                            text = "About Jagr",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textPrimary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Jagr is a modern, high-performance, offline-first personal reflection and habit-tracking companion designed to foster daily self-improvement and streak integrity.",
+                            fontSize = 12.sp,
+                            color = textSecondary,
+                            lineHeight = 16.sp
+                        )
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Current Version info
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "Current Version", fontWeight = FontWeight.Bold, color = textPrimary, fontSize = 14.sp)
+                            Text(text = viewModel.currentVersion, fontWeight = FontWeight.SemiBold, color = textSecondary, fontSize = 14.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Latest Version info
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val latestVer = viewModel.activeUpdateInfo?.latestVersion ?: "Up to date"
+                            Text(text = "Latest Version", fontWeight = FontWeight.Bold, color = textPrimary, fontSize = 14.sp)
+                            Text(text = latestVer, fontWeight = FontWeight.SemiBold, color = if (latestVer == "Up to date") textSecondary else accentPrimary, fontSize = 14.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Last Checked info
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "Last Checked", fontWeight = FontWeight.Bold, color = textPrimary, fontSize = 14.sp)
+                            Text(text = viewModel.lastCheckedTimeStr, fontWeight = FontWeight.SemiBold, color = textSecondary, fontSize = 12.sp)
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Check Now / Update controls
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = "Check for Updates", fontWeight = FontWeight.Bold, color = textPrimary, fontSize = 14.sp)
+                                Text(text = "Verify if a newer version is online", color = textSecondary, fontSize = 11.sp)
+                            }
+                            
+                            if (viewModel.isCheckingForUpdates) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = accentPrimary
+                                )
+                            } else {
+                                Button(
+                                    onClick = {
+                                        viewModel.checkForUpdates(manual = true)
+                                        Toast.makeText(context, "Checking for updates...", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                                ) {
+                                    Text(text = "Check Now", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+
+                        // Customizable URL Field
+                        if (!viewModel.isMockUpdateMode) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
+                            Spacer(modifier = Modifier.height(12.dp))
+                            
+                            Text(text = "Remote Update Config URL", fontWeight = FontWeight.Bold, color = textPrimary, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = viewModel.updateCheckUrl,
+                                onValueChange = { viewModel.updateCheckUrl = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = accentPrimary,
+                                    unfocusedBorderColor = borderStrokeColor,
+                                    focusedTextColor = textPrimary,
+                                    unfocusedTextColor = textSecondary
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                singleLine = true
+                            )
+                        }
+
+                        // Developer Mock options inside an elegant expandable outline for testing convenience!
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        var showDevOpts by remember { mutableStateOf(false) }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showDevOpts = !showDevOpts }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "Testing & Demo Options", fontWeight = FontWeight.Bold, color = textSecondary, fontSize = 13.sp)
+                            Text(text = if (showDevOpts) "Hide" else "Show", color = accentPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        if (showDevOpts) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "Enable Mock Mode", fontSize = 13.sp, color = textPrimary)
+                                Switch(
+                                    checked = viewModel.isMockUpdateMode,
+                                    onCheckedChange = { viewModel.isMockUpdateMode = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = accentPrimary,
+                                        uncheckedThumbColor = textSecondary,
+                                        uncheckedTrackColor = borderStrokeColor
+                                    )
+                                )
+                            }
+
+                            if (viewModel.isMockUpdateMode) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(text = "Simulate Update Type:", fontSize = 12.sp, color = textSecondary, fontWeight = FontWeight.SemiBold)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    listOf("UpToDate" to "Up To Date", "OptionalUpdate" to "Optional", "ForceUpdate" to "Force").forEach { (type, label) ->
+                                        val isSelected = viewModel.mockUpdateType == type
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (isSelected) accentPrimary else borderStrokeColor)
+                                                .clickable { 
+                                                    viewModel.mockUpdateType = type
+                                                    viewModel.checkForUpdates(manual = true)
+                                                }
+                                                .padding(vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = label, 
+                                                fontSize = 11.sp, 
+                                                fontWeight = FontWeight.Bold, 
+                                                color = if (isSelected) Color.White else textSecondary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // UPDATE HISTORY SECTION
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Update History",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Version 1.0.1",
+                            fontWeight = FontWeight.Bold,
+                            color = textPrimary,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = "• AI timetable import", color = textSecondary, fontSize = 13.sp)
+                        Text(text = "• Dashboard synchronization", color = textSecondary, fontSize = 13.sp)
+                        Text(text = "• Profile improvements", color = textSecondary, fontSize = 13.sp)
+                        Text(text = "• Faster performance", color = textSecondary, fontSize = 13.sp)
+                        Text(text = "• Bug fixes", color = textSecondary, fontSize = 13.sp)
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.4f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "Version 1.0.0 (Current)",
+                            fontWeight = FontWeight.Bold,
+                            color = textSecondary,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = "• Initial release of Jagr companion app", color = textSecondary.copy(alpha = 0.8f), fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
         // GENERAL SECTION
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = "General",
+                    text = "General & Support",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = textSecondary,
@@ -2872,13 +3298,17 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                     colors = CardDefaults.cardColors(containerColor = cardBg)
                 ) {
                     Column {
-                        SettingsClickableRow(label = "Privacy", leadingIcon = Icons.Default.PrivacyTip, isDark = isDark, onClick = {})
+                        SettingsClickableRow(label = "Privacy Policy", leadingIcon = Icons.Default.PrivacyTip, isDark = isDark, onClick = {
+                            Toast.makeText(context, "Privacy Policy is offline-protected.", Toast.LENGTH_SHORT).show()
+                        })
                         HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
-                        SettingsClickableRow(label = "About Jagr", leadingIcon = Icons.Default.Info, isDark = isDark, onClick = {})
+                        SettingsClickableRow(label = "Rate Us", leadingIcon = Icons.Default.Star, isDark = isDark, onClick = {
+                            Toast.makeText(context, "Thank you for your rating!", Toast.LENGTH_SHORT).show()
+                        })
                         HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
-                        SettingsClickableRow(label = "Rate Us", leadingIcon = Icons.Default.Star, isDark = isDark, onClick = {})
-                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.6f))
-                        SettingsClickableRow(label = "Help & Support", leadingIcon = Icons.Default.Help, isDark = isDark, onClick = {})
+                        SettingsClickableRow(label = "Help & Support", leadingIcon = Icons.Default.Help, isDark = isDark, onClick = {
+                            Toast.makeText(context, "Support Desk: support@jagr.app", Toast.LENGTH_LONG).show()
+                        })
                     }
                 }
             }
