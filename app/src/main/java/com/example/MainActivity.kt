@@ -4,6 +4,9 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -30,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +55,32 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        try {
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    this,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                androidx.core.app.ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                    101
+                )
+            }
+        }
+
+        try {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().isAutoInitEnabled = false
+        } catch (e: Throwable) {
+            android.util.Log.w("FCM_INIT", "FCM disabled or unavailable: ${e.message}")
+        }
+        
         val database = Room.databaseBuilder(
             applicationContext, 
             AppDatabase::class.java, 
@@ -65,6 +95,7 @@ class MainActivity : ComponentActivity() {
         })[HabitViewModel::class.java]
         
         viewModel.loadUserProfile(applicationContext)
+        updateAllChallengeNotifications(applicationContext, viewModel.challengesList)
 
         enableEdgeToEdge()
         setContent {
@@ -130,9 +161,10 @@ fun HabitTrackerScreen(viewModel: HabitViewModel) {
                 ) {
                     val tabs = listOf(
                         NavigationTabItem("Home", Icons.Filled.Home, Icons.Outlined.Home, 0),
-                        NavigationTabItem("Calendar", Icons.Filled.DateRange, Icons.Outlined.DateRange, 1),
-                        NavigationTabItem("Insights", Icons.Filled.Leaderboard, Icons.Outlined.Leaderboard, 2),
-                        NavigationTabItem("Profile", Icons.Filled.Person, Icons.Outlined.Person, 3)
+                        NavigationTabItem("Challenge", Icons.Filled.EmojiEvents, Icons.Outlined.EmojiEvents, 1),
+                        NavigationTabItem("Calendar", Icons.Filled.DateRange, Icons.Outlined.DateRange, 2),
+                        NavigationTabItem("Insights", Icons.Filled.Leaderboard, Icons.Outlined.Leaderboard, 3),
+                        NavigationTabItem("Profile", Icons.Filled.Person, Icons.Outlined.Person, 4)
                     )
 
                     tabs.forEach { tab ->
@@ -188,9 +220,10 @@ fun HabitTrackerScreen(viewModel: HabitViewModel) {
                 ) { targetTab ->
                     when (targetTab) {
                         0 -> HomeReflectionScreen(viewModel, records)
-                        1 -> CalendarReflectionScreen(viewModel, records)
-                        2 -> InsightsReflectionScreen(viewModel, records)
-                        3 -> SettingsReflectionScreen(viewModel)
+                        1 -> ChallengeScreen(viewModel)
+                        2 -> CalendarReflectionScreen(viewModel, records)
+                        3 -> InsightsReflectionScreen(viewModel, records)
+                        4 -> SettingsReflectionScreen(viewModel)
                     }
                 }
             }
@@ -347,7 +380,7 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
                         selected = false,
                         onClick = {
                             scope.launch { drawerState.close() }
-                            viewModel.selectedTab = 3 // Go to Settings
+                            viewModel.selectedTab = 4 // Go to Settings
                         },
                         colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent)
                     )
@@ -366,390 +399,25 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(background)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // TOP GREETING HEADER (Matches Activity Mockup Exactly)
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp, bottom = 4.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = textPrimary)
-                            }
-                            
-                            IconButton(onClick = { showNotificationsDialog = true }) {
-                                Box(contentAlignment = Alignment.TopEnd) {
-                                    Icon(imageVector = Icons.Default.Notifications, contentDescription = "Notifications", tint = textPrimary)
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(top = 2.dp, end = 2.dp)
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(accentPrimary)
-                                    )
-                                }
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            modifier = Modifier.padding(horizontal = 4.dp)
-                        ) {
-                            // Avatar Placeholder with beautiful Emoji or Google Profile Image
-                            Box(
-                                modifier = Modifier
-                                    .size(52.dp)
-                                    .clip(CircleShape)
-                                    .background(accentPrimary.copy(alpha = 0.15f))
-                                    .border(1.5.dp, accentPrimary.copy(alpha = 0.3f), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (viewModel.loginType == "Google" && viewModel.googleProfilePictureUrl.isNotEmpty()) {
-                                    coil.compose.AsyncImage(
-                                        model = viewModel.googleProfilePictureUrl,
-                                        contentDescription = "Google Profile Picture",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                    )
-                                } else {
-                                    Text(
-                                        text = viewModel.userAvatarEmoji,
-                                        fontSize = 28.sp
-                                    )
-                                }
-                            }
-                            
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "Good day, ",
-                                        fontSize = 24.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = textPrimary
-                                    )
-                                    Text(
-                                        text = viewModel.userName,
-                                        fontSize = 24.sp,
-                                        fontWeight = FontWeight.Black,
-                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                        color = textPrimary
-                                    )
-                                }
-                                Text(
-                                    text = "Track your daily activity & stay healthy",
-                                    fontSize = 13.sp,
-                                    color = textSecondary
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // GRADIENT RECOVERY SCORE CARD
-                item {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(24.dp)),
-                        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = if (viewModel.accentColorName == "Emerald") {
-                                            listOf(Color(0xFF3B2E9F), Color(0xFF6C63FF)) // Gorgeous Purple gradient
-                                        } else {
-                                            listOf(Color(0xFF064E3B), Color(0xFF10B981)) // Green gradient
-                                        }
-                                    )
-                                )
-                                .padding(24.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)
-                            ) {
-                                // Left - Circle Progress
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.size(96.dp)
-                                ) {
-                                    Canvas(modifier = Modifier.size(88.dp)) {
-                                        drawCircle(
-                                            color = Color.White.copy(alpha = 0.15f),
-                                            radius = size.minDimension / 2,
-                                            style = Stroke(width = 6.dp.toPx())
-                                        )
-                                        drawArc(
-                                            color = Color.White,
-                                            startAngle = -90f,
-                                            sweepAngle = scoreSweepAngle, // dynamic
-                                            useCenter = false,
-                                            style = Stroke(width = 6.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                                        )
-                                    }
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = recoveryScore.toString(),
-                                            fontSize = 28.sp,
-                                            fontWeight = FontWeight.Black,
-                                            color = Color.White
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Default.Favorite,
-                                            contentDescription = "Heart",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                }
-
-                                // Right - Progress description and sparkline
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = recoveryLabel,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        lineHeight = 20.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = recoveryMessage,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color.White.copy(alpha = 0.8f)
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    
-                                    // High-fidelity custom Sparkline
-                                    Sparkline(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(32.dp),
-                                        points = if (records.isEmpty()) listOf(0f, 0f) else calculateRecoveryScoreTrend(records),
-                                        lineColor = Color.White,
-                                        strokeWidth = 3f
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // INTERACTIVE QUESTIONS LIST
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // Q1: Did you masturbate?
-                        QuestionCheckInCard(
-                            indexBadge = "1",
-                            title = "Did you masturbate?",
-                            isExpanded = viewModel.masturbationExpanded,
-                            onToggleExpand = { viewModel.masturbationExpanded = !viewModel.masturbationExpanded },
-                            answer = viewModel.masturbationSlipped,
-                            onAnswerChange = { viewModel.masturbationSlipped = it },
-                            count = viewModel.masturbationCount,
-                            onCountChange = { viewModel.masturbationCount = it },
-                            triggers = viewModel.masturbationTriggers,
-                            onTriggerToggle = { trigger ->
-                                viewModel.masturbationTriggers = if (viewModel.masturbationTriggers.contains(trigger)) {
-                                    viewModel.masturbationTriggers.filter { it != trigger }
-                                } else {
-                                    viewModel.masturbationTriggers + trigger
-                                }
-                            },
-                            notes = viewModel.masturbationNotes,
-                            onNotesChange = { viewModel.masturbationNotes = it },
-                            viewModel = viewModel
-                        )
-
-                        // Q2: Watched Porn?
-                        QuestionCheckInCard(
-                            indexBadge = "2",
-                            title = "Watched Porn?",
-                            isExpanded = viewModel.pornExpanded,
-                            onToggleExpand = { viewModel.pornExpanded = !viewModel.pornExpanded },
-                            answer = viewModel.pornSlipped,
-                            onAnswerChange = { viewModel.pornSlipped = it },
-                            count = viewModel.pornCount,
-                            onCountChange = { viewModel.pornCount = it },
-                            triggers = viewModel.pornTriggers,
-                            onTriggerToggle = { trigger ->
-                                viewModel.pornTriggers = if (viewModel.pornTriggers.contains(trigger)) {
-                                    viewModel.pornTriggers.filter { it != trigger }
-                                } else {
-                                    viewModel.pornTriggers + trigger
-                                }
-                            },
-                            notes = viewModel.pornNotes,
-                            onNotesChange = { viewModel.pornNotes = it },
-                            viewModel = viewModel
-                        )
-
-                        // Q3: Had Sexual / Intrusive Thoughts?
-                        QuestionCheckInCard(
-                            indexBadge = "3",
-                            title = "Had Sexual / Intrusive Thoughts?",
-                            isExpanded = viewModel.thoughtsExpanded,
-                            onToggleExpand = { viewModel.thoughtsExpanded = !viewModel.thoughtsExpanded },
-                            answer = viewModel.thoughtsSlipped,
-                            onAnswerChange = { viewModel.thoughtsSlipped = it },
-                            count = viewModel.thoughtsCount,
-                            onCountChange = { viewModel.thoughtsCount = it },
-                            triggers = viewModel.thoughtsTriggers,
-                            onTriggerToggle = { trigger ->
-                                viewModel.thoughtsTriggers = if (viewModel.thoughtsTriggers.contains(trigger)) {
-                                    viewModel.thoughtsTriggers.filter { it != trigger }
-                                } else {
-                                    viewModel.thoughtsTriggers + trigger
-                                }
-                            },
-                            notes = viewModel.thoughtsNotes,
-                            onNotesChange = { viewModel.thoughtsNotes = it },
-                            viewModel = viewModel
-                        )
-
-                        // Q4: Experienced an Urge?
-                        QuestionCheckInCard(
-                            indexBadge = "4",
-                            title = "Experienced an Urge?",
-                            isExpanded = viewModel.urgeExpanded,
-                            onToggleExpand = { viewModel.urgeExpanded = !viewModel.urgeExpanded },
-                            answer = viewModel.urgeSlipped,
-                            onAnswerChange = { viewModel.urgeSlipped = it },
-                            count = viewModel.urgeCount,
-                            onCountChange = { viewModel.urgeCount = it },
-                            triggers = viewModel.urgeTriggers,
-                            onTriggerToggle = { trigger ->
-                                viewModel.urgeTriggers = if (viewModel.urgeTriggers.contains(trigger)) {
-                                    viewModel.urgeTriggers.filter { it != trigger }
-                                } else {
-                                    viewModel.urgeTriggers + trigger
-                                }
-                            },
-                            notes = viewModel.urgeNotes,
-                            onNotesChange = { viewModel.urgeNotes = it },
-                            viewModel = viewModel
-                        )
-                    }
-                }
-
-                // MOOD TODAY SECTION
-                item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "Mood Today",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = textPrimary,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val emojis = listOf("😄", "😊", "😐", "😟", "😡", "😴", "😢")
-                            emojis.forEachIndexed { idx, emoji ->
-                                val isSelected = viewModel.selectedMoodIndex == idx
-                                val bgCircleColor = if (isSelected) accentPrimary.copy(alpha = 0.15f) else borderStrokeColor.copy(alpha = 0.4f)
-                                val borderStroke = if (isSelected) BorderStroke(2.dp, accentPrimary) else BorderStroke(1.dp, Color.Transparent)
-
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(CircleShape)
-                                        .background(bgCircleColor)
-                                        .border(borderStroke, CircleShape)
-                                        .clickable { viewModel.selectedMoodIndex = idx }
-                                ) {
-                                    Text(text = emoji, fontSize = 20.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // JOURNAL / NOTES SECTION
-                item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "Journal / Notes",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = textPrimary,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        OutlinedTextField(
-                            value = viewModel.journalNotes,
-                            onValueChange = { viewModel.journalNotes = it },
-                            placeholder = { Text("How was your day? Write anything...", color = textSecondary) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(110.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = textPrimary,
-                                unfocusedTextColor = textPrimary,
-                                focusedBorderColor = accentPrimary,
-                                unfocusedBorderColor = borderStrokeColor,
-                                focusedContainerColor = if (isDark) Color(0xFF131C2E) else Color.White,
-                                unfocusedContainerColor = if (isDark) Color(0xFF131C2E) else Color.White
-                            ),
-                            maxLines = 5
-                        )
-                    }
-                }
-
-                // SAVE BUTTON
-                item {
-                    Button(
-                        onClick = {
-                            viewModel.saveTodayLog()
-                            Toast.makeText(context, "Log saved successfully!", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 12.dp)
-                            .height(54.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Icon(imageVector = Icons.Default.Lock, contentDescription = "Lock", modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "SAVE TODAY'S LOG",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            letterSpacing = 1.sp
-                        )
-                    }
-                }
-
-                item {
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
+            if (viewModel.showAppUsageScreen) {
+                AppUsageScreen(
+                    viewModel = viewModel,
+                    onBack = { viewModel.showAppUsageScreen = false }
+                )
+            } else if (viewModel.showDailyLogScreen) {
+                DailyLogScreen(
+                    viewModel = viewModel,
+                    records = records,
+                    onBack = { viewModel.showDailyLogScreen = false }
+                )
+            } else {
+                HomeReflectionDashboard(
+                    viewModel = viewModel,
+                    records = records,
+                    scope = scope,
+                    drawerState = drawerState,
+                    onOpenNotifications = { showNotificationsDialog = true }
+                )
             }
 
             // Interactive Dialog overlays
@@ -844,58 +512,1587 @@ fun HomeReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecord>) 
             }
 
             if (showNotificationsDialog) {
+                val activeChallenges = viewModel.activeChallengesList
                 AlertDialog(
                     onDismissRequest = { showNotificationsDialog = false },
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = accentPrimary)
-                            Text("Motivational Alerts", fontWeight = FontWeight.Bold, color = textPrimary)
+                            Text("Challenge Reminders", fontWeight = FontWeight.Bold, color = textPrimary)
                         }
                     },
                     text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // Notification 1
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                border = BorderStroke(1.dp, borderStrokeColor),
-                                colors = CardDefaults.cardColors(containerColor = background)
-                            ) {
-                                Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Icon(Icons.Default.TipsAndUpdates, contentDescription = null, tint = accentPrimary)
-                                    Column {
-                                        Text("Daily Reminder • 9:00 PM", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = textPrimary)
-                                        Text("Time to complete your daily reflection log! Regular check-ins reinforce mindfulness.", fontSize = 11.sp, color = textSecondary)
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            if (activeChallenges.isNotEmpty()) {
+                                activeChallenges.forEach { challenge ->
+                                    val currentDay = challenge.getCurrentDayNumber()
+                                    val todayRecord = challenge.dayRecords.firstOrNull { it.dayNumber == currentDay }
+                                    val todayStatus = todayRecord?.status ?: "PENDING"
+
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        border = BorderStroke(1.dp, borderStrokeColor),
+                                        colors = CardDefaults.cardColors(containerColor = background)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(14.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = challenge.habitName,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp,
+                                                    color = textPrimary,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                
+                                                val (statusBg, statusText, statusLabel) = when (todayStatus) {
+                                                    "SUCCESS" -> Triple(Color(0xFF10B981).copy(alpha = 0.15f), Color(0xFF10B981), "Passed ✅")
+                                                    "FAILED" -> Triple(Color(0xFFEF4444).copy(alpha = 0.15f), Color(0xFFEF4444), "Slipped ❌")
+                                                    else -> Triple(Color(0xFFF59E0B).copy(alpha = 0.15f), Color(0xFFF59E0B), "Pending ⏰")
+                                                }
+
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = statusBg
+                                                ) {
+                                                    Text(
+                                                        text = statusLabel,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = statusText,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            Text(
+                                                text = "Nightly check-in scheduled for ${challenge.attendanceTime} (Day $currentDay of ${challenge.totalDays})",
+                                                fontSize = 11.sp,
+                                                color = textSecondary
+                                            )
+
+                                            if (todayStatus == "PENDING") {
+                                                Button(
+                                                    onClick = {
+                                                        showNotificationsDialog = false
+                                                        viewModel.showCheckInDialogForChallenge = challenge
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                                                    contentPadding = PaddingValues(vertical = 6.dp)
+                                                ) {
+                                                    Text("Submit Attendance Check-In ⏰", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                            }
-                            
-                            // Notification 2
-                            Card(
-                                modifier = Modifier.fillMaxWidth(),
-                                border = BorderStroke(1.dp, borderStrokeColor),
-                                colors = CardDefaults.cardColors(containerColor = background)
-                            ) {
-                                Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Icon(Icons.Default.Favorite, contentDescription = null, tint = Color(0xFFEF4444))
-                                    Column {
-                                        Text("Recovery Tip • Active", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = textPrimary)
-                                        Text("You are doing great! Self-control is strength. Right thought is mastery.", fontSize = 11.sp, color = textSecondary)
-                                    }
+                            } else {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.NotificationsNone,
+                                        contentDescription = null,
+                                        tint = textSecondary,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "No pending attendance alerts",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = textPrimary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Start a habit challenge in the Challenges tab to get nightly check-in notifications.",
+                                        fontSize = 12.sp,
+                                        color = textSecondary,
+                                        textAlign = TextAlign.Center
+                                    )
                                 }
                             }
                         }
                     },
                     confirmButton = {
-                        Button(
-                            onClick = { showNotificationsDialog = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = accentPrimary)
+                        TextButton(
+                            onClick = { showNotificationsDialog = false }
                         ) {
-                            Text("Mark as read", color = Color.White)
+                            Text("Close", color = accentPrimary, fontWeight = FontWeight.Bold)
                         }
                     },
                     containerColor = cardBg
                 )
             }
+        }
+    }
+}
+
+fun formatTime(timestamp: Long?): String {
+    if (timestamp == null) return ""
+    val sdf = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+    return sdf.format(java.util.Date(timestamp))
+}
+
+fun getTodaySummary(todayRecords: List<HabitRecord>): String {
+    val masturbated = todayRecords.any { it.activityType == "Masturbation" && it.count > 0 }
+    val porn = todayRecords.any { it.activityType == "Pornography" && it.count > 0 }
+    val thoughts = todayRecords.any { it.activityType == "Dirty Thoughts" && it.count > 0 }
+    val urges = todayRecords.any { it.activityType == "Urge" && it.count > 0 }
+    val resisted = todayRecords.any { it.activityType == "UrgeResisted" && it.count > 0 }
+    
+    return when {
+        !masturbated && !porn && !urges && !thoughts -> "Pristine Day! A perfect oasis of calm."
+        !masturbated && !porn && urges && resisted -> "Triumphant! Resisted urges with strength."
+        !masturbated && !porn && urges && !resisted -> "Challenging day, but you kept your clean streak."
+        !masturbated && !porn && thoughts -> "Mindful day. Had some thoughts but stayed strong."
+        masturbated && porn -> "Slipped in both habits. Tomorrow is a fresh start to rise again."
+        masturbated -> "Slipped in masturbation. Stay resilient, recovery is a journey."
+        porn -> "Slipped in pornography. Forgive yourself and refocus."
+        else -> "Log submitted. Reflect and rest well tonight."
+    }
+}
+
+@Composable
+fun HomeReflectionDashboard(
+    viewModel: HabitViewModel,
+    records: List<HabitRecord>,
+    scope: kotlinx.coroutines.CoroutineScope,
+    drawerState: DrawerState,
+    onOpenNotifications: () -> Unit
+) {
+    val context = LocalContext.current
+    val isDark = viewModel.isDarkMode
+    
+    val background = MaterialTheme.colorScheme.background
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val cardBg = MaterialTheme.colorScheme.surface
+
+    var currentDateText by remember { mutableStateOf(getCurrentFormattedDate()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentDateText = getCurrentFormattedDate()
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
+
+    val todayRecords = remember(records) { records.filter { isToday(it.timestamp) } }
+    val isSubmitted = viewModel.isTodayLogSubmitted
+    
+    val currentStreak = remember(records) { calculateCurrentStreak(records) }
+    val recoveryScore = remember(records) { calculateRecoveryScore(records) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(background)
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // TOP GREETING HEADER
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu", tint = textPrimary)
+                    }
+                    
+                    val hasPendingAlerts = viewModel.activeChallengesList.any { challenge ->
+                        val day = challenge.getCurrentDayNumber()
+                        challenge.dayRecords.firstOrNull { it.dayNumber == day }?.status == "PENDING"
+                    }
+
+                    IconButton(onClick = onOpenNotifications) {
+                        Box(contentAlignment = Alignment.TopEnd) {
+                            Icon(imageVector = Icons.Default.Notifications, contentDescription = "Notifications", tint = textPrimary)
+                            if (hasPendingAlerts) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 2.dp, end = 2.dp)
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFEF4444))
+                                )
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                ) {
+                    val headerPhotoUrl = when {
+                        viewModel.customProfilePictureUri.isNotEmpty() -> viewModel.customProfilePictureUri
+                        viewModel.loginType == "Google" && viewModel.googleProfilePictureUrl.isNotEmpty() -> viewModel.googleProfilePictureUrl
+                        else -> ""
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(accentPrimary.copy(alpha = 0.15f))
+                            .border(1.5.dp, accentPrimary.copy(alpha = 0.3f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (headerPhotoUrl.isNotEmpty()) {
+                            coil.compose.AsyncImage(
+                                model = headerPhotoUrl,
+                                contentDescription = "Profile Picture",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                        } else {
+                            Text(
+                                text = viewModel.userAvatarEmoji,
+                                fontSize = 28.sp
+                            )
+                        }
+                    }
+                    
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Good day, ",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textPrimary
+                            )
+                            Text(
+                                text = viewModel.userName,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Black,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = textPrimary
+                            )
+                        }
+                        Text(
+                            text = "Track your daily activity & stay healthy",
+                            fontSize = 13.sp,
+                            color = textSecondary
+                        )
+                    }
+                }
+            }
+        }
+
+        // TODAY'S DAILY LOG CARD
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .border(1.5.dp, if (isSubmitted) accentPrimary.copy(alpha = 0.6f) else borderStrokeColor, RoundedCornerShape(22.dp))
+                    .testTag("today_log_card"),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isDark) Color(0xFF161E2E) else Color(0xFFF9FAFB)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Today's Daily Log",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = textPrimary
+                            )
+                            Text(
+                                text = currentDateText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = textSecondary
+                            )
+                        }
+                        
+                        // Status badge
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isSubmitted) accentPrimary.copy(alpha = 0.15f) 
+                                    else Color(0xFFF59E0B).copy(alpha = 0.15f)
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isSubmitted) accentPrimary else Color(0xFFF59E0B))
+                                )
+                                Text(
+                                    text = if (isSubmitted) "Completed" else "Not Completed",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSubmitted) accentPrimary else Color(0xFFF59E0B)
+                                )
+                            }
+                        }
+                    }
+
+                    if (!isSubmitted) {
+                        Text(
+                            text = "Take a moment before sleeping to record your reflections, maintain your recovery streaks, and capture insights from today.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = textSecondary,
+                            lineHeight = 20.sp
+                        )
+                        
+                        Button(
+                            onClick = {
+                                viewModel.loadTodayLog(records)
+                                viewModel.isDailyLogReadOnly = false
+                                viewModel.showDailyLogScreen = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .testTag("complete_log_button"),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = accentPrimary)
+                        ) {
+                            Icon(imageVector = Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Complete Today's Log",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = Color.White
+                            )
+                        }
+                    } else {
+                        // Completed view elements
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.4f))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Mini Recovery Score Circle
+                            val todayScore = calculateSingleDayScore(todayRecords)
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.size(64.dp)
+                            ) {
+                                Canvas(modifier = Modifier.size(56.dp)) {
+                                    drawCircle(
+                                        color = borderStrokeColor.copy(alpha = 0.2f),
+                                        radius = size.minDimension / 2,
+                                        style = Stroke(width = 4.dp.toPx())
+                                    )
+                                    drawArc(
+                                        color = if (todayScore >= 80) Color(0xFF10B981) else if (todayScore >= 50) Color(0xFFF59E0B) else Color(0xFFEF4444),
+                                        startAngle = -90f,
+                                        sweepAngle = (todayScore.toFloat() / 100f) * 360f,
+                                        useCenter = false,
+                                        style = Stroke(width = 4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "$todayScore",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = textPrimary
+                                    )
+                                    Text(
+                                        text = "score",
+                                        fontSize = 8.sp,
+                                        color = textSecondary
+                                    )
+                                }
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = accentPrimary, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        text = "Today's Reflection Completed",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = textPrimary
+                                    )
+                                }
+                                
+                                viewModel.todaySubmissionTimestamp?.let { ts ->
+                                    Text(
+                                        text = "Submitted at ${formatTime(ts)}",
+                                        fontSize = 11.sp,
+                                        color = textSecondary
+                                    )
+                                }
+                                
+                                Spacer(modifier = Modifier.height(4.dp))
+                                
+                                Text(
+                                    text = getTodaySummary(todayRecords),
+                                    fontSize = 12.sp,
+                                    color = textSecondary,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                viewModel.loadTodayLog(records)
+                                viewModel.isDailyLogReadOnly = true
+                                viewModel.showDailyLogScreen = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("view_log_button"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Visibility, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "View / Edit Today's Log",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // CURRENT STREAK CARD & OVERALL RECOVERY SCORE CARD SIDE BY SIDE
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Streak Card
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(imageVector = Icons.Default.LocalFireDepartment, contentDescription = "Fire", tint = Color(0xFFF97316), modifier = Modifier.size(20.dp))
+                            Text(text = "Current Streak", style = MaterialTheme.typography.bodySmall, color = textSecondary, fontWeight = FontWeight.Bold)
+                        }
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                text = "$currentStreak",
+                                fontSize = 36.sp,
+                                fontWeight = FontWeight.Black,
+                                color = textPrimary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "days",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textSecondary,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Overall Score Card
+                Card(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(imageVector = Icons.Default.Favorite, contentDescription = "Heart", tint = Color(0xFFEF4444), modifier = Modifier.size(18.dp))
+                            Text(text = "Overall Recovery", style = MaterialTheme.typography.bodySmall, color = textSecondary, fontWeight = FontWeight.Bold)
+                        }
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(
+                                text = "$recoveryScore",
+                                fontSize = 36.sp,
+                                fontWeight = FontWeight.Black,
+                                color = textPrimary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "%",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textSecondary,
+                                modifier = Modifier.padding(bottom = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // APP USAGE & SCREEN TIME SECTION ON HOME PAGE
+        item {
+            HomeAppUsageCard(
+                viewModel = viewModel,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                accentPrimary = accentPrimary,
+                borderStrokeColor = borderStrokeColor,
+                cardBg = cardBg
+            )
+        }
+
+        // ACTIVE CHALLENGE STREAKS SECTION ON HOME PAGE
+        item {
+            HomeChallengeStreaksCard(
+                viewModel = viewModel,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                accentPrimary = accentPrimary,
+                borderStrokeColor = borderStrokeColor,
+                cardBg = cardBg,
+                isDark = isDark
+            )
+        }
+
+        // QUICK STATISTICS CARD
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Quick Statistics",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                )
+                
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        val longestStreak = remember(records) { calculateLongestStreak(records) }
+                        val pornFree = remember(records) { calculatePornFreeDays(records) }
+                        val mastFree = remember(records) { calculateMasturbationFreeDays(records) }
+                        val totalReflections = remember(records) { records.filter { it.activityType == "ReflectionSubmission" }.size }
+                        val maxChallengeStreak = viewModel.activeChallengesList.maxOfOrNull { it.getConsecutiveStreak() } ?: 0
+                        val challengeStreakStr = if (viewModel.activeChallengesList.isEmpty()) "No active challenge" else "$maxChallengeStreak days"
+                        
+                        StatRow(label = "Top Challenge Streak", value = challengeStreakStr, icon = Icons.Default.EmojiEvents, iconColor = Color(0xFFF59E0B), textPrimary = textPrimary, textSecondary = textSecondary)
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.3f))
+                        StatRow(label = "Longest Streak", value = "$longestStreak days", icon = Icons.Default.Leaderboard, iconColor = Color(0xFF3B82F6), textPrimary = textPrimary, textSecondary = textSecondary)
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.3f))
+                        StatRow(label = "Pornography-Free Days", value = "$pornFree days", icon = Icons.Default.VisibilityOff, iconColor = Color(0xFF10B981), textPrimary = textPrimary, textSecondary = textSecondary)
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.3f))
+                        StatRow(label = "Masturbation-Free Days", value = "$mastFree days", icon = Icons.Default.ThumbUp, iconColor = Color(0xFF6366F1), textPrimary = textPrimary, textSecondary = textSecondary)
+                        HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.3f))
+                        StatRow(label = "Total Reflection Logs", value = "$totalReflections", icon = Icons.Default.MenuBook, iconColor = Color(0xFFEC4899), textPrimary = textPrimary, textSecondary = textSecondary)
+                    }
+                }
+            }
+        }
+
+        // MOTIVATIONAL QUOTE CARD
+        item {
+            val (quote, author) = remember { getDailyMotivationalQuote() }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isDark) Color(0xFF1B1B2F) else Color(0xFFEEF2F6)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FormatQuote,
+                        contentDescription = "Quote",
+                        tint = accentPrimary.copy(alpha = 0.5f),
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Text(
+                        text = quote,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = textPrimary,
+                        lineHeight = 22.sp
+                    )
+                    Text(
+                        text = "— $author",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = accentPrimary,
+                        modifier = Modifier.align(Alignment.End)
+                    )
+                }
+            }
+        }
+
+        // RECENT ACHIEVEMENT CARD
+        item {
+            val achievement = remember(records) { calculateRecentAchievement(records) }
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Recent Achievement",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                )
+                
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
+                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFFF59E0B).copy(alpha = 0.15f))
+                        ) {
+                            Icon(
+                                imageVector = achievement.icon,
+                                contentDescription = achievement.title,
+                                tint = Color(0xFFF59E0B),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = achievement.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = textPrimary
+                            )
+                            Text(
+                                text = achievement.description,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = textSecondary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+fun HomeAppUsageCard(
+    viewModel: HabitViewModel,
+    textPrimary: Color,
+    textSecondary: Color,
+    accentPrimary: Color,
+    borderStrokeColor: Color,
+    cardBg: Color
+) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        viewModel.refreshAppUsageSummary(context)
+    }
+
+    val summary = viewModel.appUsageSummaryState ?: remember {
+        AppUsageTracker.getUsageSummary(context, viewModel.selectedUsageTimeFrame)
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp, start = 4.dp, end = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PhoneAndroid,
+                    contentDescription = null,
+                    tint = accentPrimary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Screen Time & App Usage",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary
+                )
+            }
+
+            TextButton(
+                onClick = { viewModel.showAppUsageScreen = true },
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Text(
+                    text = "View Analytics ➔",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = accentPrimary
+                )
+            }
+        }
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(20.dp))
+                .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp))
+                .clickable { viewModel.showAppUsageScreen = true },
+            colors = CardDefaults.cardColors(containerColor = cardBg)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Today's Screen Time",
+                            fontSize = 12.sp,
+                            color = textSecondary
+                        )
+                        Text(
+                            text = summary.getFormattedTotalScreenTime(),
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = textPrimary
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = accentPrimary.copy(alpha = 0.12f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LockClock,
+                                contentDescription = null,
+                                tint = accentPrimary,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "${summary.topApps.size} Apps Tracked",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentPrimary
+                            )
+                        }
+                    }
+                }
+
+                if (summary.topApps.isNotEmpty()) {
+                    HorizontalDivider(color = borderStrokeColor.copy(alpha = 0.4f))
+
+                    Text(
+                        text = "Most Used Today",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = textSecondary
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        summary.topApps.take(3).forEach { app ->
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                color = MaterialTheme.colorScheme.background,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, borderStrokeColor.copy(alpha = 0.5f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    AppIconImage(drawable = app.icon, fallbackCategory = app.category)
+                                    Text(
+                                        text = app.appName,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = textPrimary,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = app.getFormattedDuration(),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = accentPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeChallengeStreaksCard(
+    viewModel: HabitViewModel,
+    textPrimary: Color,
+    textSecondary: Color,
+    accentPrimary: Color,
+    borderStrokeColor: Color,
+    cardBg: Color,
+    isDark: Boolean
+) {
+    val activeChallenges = viewModel.activeChallengesList
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp, start = 4.dp, end = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.EmojiEvents,
+                    contentDescription = "Challenge Streaks",
+                    tint = Color(0xFFF59E0B),
+                    modifier = Modifier.size(18.dp)
+                )
+                Text(
+                    text = "Challenge Streaks",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textSecondary
+                )
+            }
+            if (activeChallenges.isNotEmpty()) {
+                TextButton(
+                    onClick = { viewModel.selectedTab = 3 },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(
+                        text = "View All (${activeChallenges.size})",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accentPrimary
+                    )
+                }
+            }
+        }
+
+        if (activeChallenges.isEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(containerColor = cardBg)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "No Active Challenges",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = textPrimary
+                        )
+                        Text(
+                            text = "Start a 7, 14, or 30-day challenge to build a streak.",
+                            fontSize = 12.sp,
+                            color = textSecondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { viewModel.selectedTab = 3 },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Start 🚀", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                activeChallenges.forEach { challenge ->
+                    val streak = challenge.getConsecutiveStreak()
+                    val currentDay = challenge.getCurrentDayNumber()
+                    val progressPercent = (challenge.calculateProgress() * 100).toInt()
+                    val todayRecord = challenge.dayRecords.firstOrNull { it.dayNumber == currentDay }
+                    val todayStatus = todayRecord?.status ?: "PENDING"
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(20.dp))
+                            .border(
+                                1.5.dp,
+                                if (todayStatus == "PENDING") Color(0xFFF59E0B).copy(alpha = 0.5f)
+                                else accentPrimary.copy(alpha = 0.3f),
+                                RoundedCornerShape(20.dp)
+                            ),
+                        colors = CardDefaults.cardColors(containerColor = cardBg)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = challenge.habitName,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = textPrimary
+                                    )
+                                    Text(
+                                        text = "Day $currentDay of ${challenge.totalDays} • $progressPercent% complete",
+                                        fontSize = 12.sp,
+                                        color = textSecondary
+                                    )
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Color(0xFFF97316).copy(alpha = 0.15f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.LocalFireDepartment,
+                                            contentDescription = null,
+                                            tint = Color(0xFFF97316),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "$streak Day Streak",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFFF97316)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Progress Bar
+                            LinearProgressIndicator(
+                                progress = { challenge.calculateProgress() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                                color = accentPrimary,
+                                trackColor = accentPrimary.copy(alpha = 0.15f)
+                            )
+
+                            // Today Check-in status & button row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                when (todayStatus) {
+                                    "SUCCESS" -> {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF10B981).copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "Today's Check-In Passed ✅",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF10B981),
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    "FAILED" -> {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFFEF4444).copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "Slipped Today ❌",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFEF4444),
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    else -> {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFFF59E0B).copy(alpha = 0.15f)
+                                        ) {
+                                            Text(
+                                                text = "Check-In Pending (${challenge.attendanceTime}) ⏰",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFF59E0B),
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                viewModel.showCheckInDialogForChallenge = challenge
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Check In Now", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatRow(label: String, value: String, icon: ImageVector, iconColor: Color, textPrimary: Color, textSecondary: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(iconColor.copy(alpha = 0.12f))
+            ) {
+                Icon(imageVector = icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(16.dp))
+            }
+            Text(text = label, fontSize = 14.sp, color = textPrimary, fontWeight = FontWeight.Medium)
+        }
+        Text(text = value, fontSize = 14.sp, fontWeight = FontWeight.Black, color = textPrimary)
+    }
+}
+
+@Composable
+fun DailyLogScreen(
+    viewModel: HabitViewModel,
+    records: List<HabitRecord>,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val isDark = viewModel.isDarkMode
+    
+    val background = MaterialTheme.colorScheme.background
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val cardBg = MaterialTheme.colorScheme.surface
+
+    val isSubmitted = viewModel.isTodayLogSubmitted
+    val readOnly = viewModel.isDailyLogReadOnly
+
+    // Ensure state matches read-only lock
+    LaunchedEffect(isSubmitted) {
+        viewModel.loadTodayLog(records)
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(background)
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // TOP BACK BAR & TITLE
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp, bottom = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = textPrimary)
+                    }
+                    
+                    if (isSubmitted && readOnly) {
+                        TextButton(
+                            onClick = { viewModel.isDailyLogReadOnly = false },
+                            colors = ButtonDefaults.textButtonColors(contentColor = accentPrimary)
+                        ) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Edit Today's Log", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    text = "Today's Daily Log",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    color = textPrimary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                Text(
+                    text = "Take a moment to reflect on your entire day before sleeping.",
+                    fontSize = 14.sp,
+                    color = textSecondary,
+                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 2.dp)
+                )
+            }
+        }
+
+        // READ ONLY WARNING BANNER
+        if (readOnly) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = accentPrimary.copy(alpha = 0.08f)),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = accentPrimary, modifier = Modifier.size(18.dp))
+                        Text(
+                            text = "This daily reflection is locked in read-only mode. Tap 'Edit Today's Log' above to make changes.",
+                            fontSize = 12.sp,
+                            color = textPrimary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // QUESTION CARDS
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Q1: Did you masturbate today?
+                QuestionCheckInCard(
+                    indexBadge = "1",
+                    title = "Did you masturbate today?",
+                    isExpanded = viewModel.masturbationExpanded,
+                    onToggleExpand = { viewModel.masturbationExpanded = !viewModel.masturbationExpanded },
+                    answer = viewModel.masturbationSlipped,
+                    onAnswerChange = { viewModel.masturbationSlipped = it },
+                    count = viewModel.masturbationCount,
+                    onCountChange = { viewModel.masturbationCount = it },
+                    triggers = viewModel.masturbationTriggers,
+                    onTriggerToggle = { trigger ->
+                        viewModel.masturbationTriggers = if (viewModel.masturbationTriggers.contains(trigger)) {
+                            viewModel.masturbationTriggers.filter { it != trigger }
+                        } else {
+                            viewModel.masturbationTriggers + trigger
+                        }
+                    },
+                    notes = viewModel.masturbationNotes,
+                    onNotesChange = { viewModel.masturbationNotes = it },
+                    viewModel = viewModel,
+                    enabled = !readOnly
+                )
+
+                // Q2: Did you watch pornography today?
+                QuestionCheckInCard(
+                    indexBadge = "2",
+                    title = "Did you watch pornography today?",
+                    isExpanded = viewModel.pornExpanded,
+                    onToggleExpand = { viewModel.pornExpanded = !viewModel.pornExpanded },
+                    answer = viewModel.pornSlipped,
+                    onAnswerChange = { viewModel.pornSlipped = it },
+                    count = viewModel.pornCount,
+                    onCountChange = { viewModel.pornCount = it },
+                    triggers = viewModel.pornTriggers,
+                    onTriggerToggle = { trigger ->
+                        viewModel.pornTriggers = if (viewModel.pornTriggers.contains(trigger)) {
+                            viewModel.pornTriggers.filter { it != trigger }
+                        } else {
+                            viewModel.pornTriggers + trigger
+                        }
+                    },
+                    notes = viewModel.pornNotes,
+                    onNotesChange = { viewModel.pornNotes = it },
+                    viewModel = viewModel,
+                    enabled = !readOnly
+                )
+
+                // Q3: Did you experience sexual or intrusive thoughts today?
+                QuestionCheckInCard(
+                    indexBadge = "3",
+                    title = "Did you experience sexual or intrusive thoughts today?",
+                    isExpanded = viewModel.thoughtsExpanded,
+                    onToggleExpand = { viewModel.thoughtsExpanded = !viewModel.thoughtsExpanded },
+                    answer = viewModel.thoughtsSlipped,
+                    onAnswerChange = { viewModel.thoughtsSlipped = it },
+                    count = viewModel.thoughtsCount,
+                    onCountChange = { viewModel.thoughtsCount = it },
+                    triggers = viewModel.thoughtsTriggers,
+                    onTriggerToggle = { trigger ->
+                        viewModel.thoughtsTriggers = if (viewModel.thoughtsTriggers.contains(trigger)) {
+                            viewModel.thoughtsTriggers.filter { it != trigger }
+                        } else {
+                            viewModel.thoughtsTriggers + trigger
+                        }
+                    },
+                    notes = viewModel.thoughtsNotes,
+                    onNotesChange = { viewModel.thoughtsNotes = it },
+                    viewModel = viewModel,
+                    enabled = !readOnly,
+                    showDropdownIcon = true
+                )
+
+                // Q4: Did you experience any urges today?
+                QuestionCheckInCard(
+                    indexBadge = "4",
+                    title = "Did you experience any urges today?",
+                    isExpanded = viewModel.urgeExpanded,
+                    onToggleExpand = { viewModel.urgeExpanded = !viewModel.urgeExpanded },
+                    answer = viewModel.urgeSlipped,
+                    onAnswerChange = { viewModel.urgeSlipped = it },
+                    count = viewModel.urgeCount,
+                    onCountChange = { viewModel.urgeCount = it },
+                    triggers = viewModel.urgeTriggers,
+                    onTriggerToggle = { trigger ->
+                        viewModel.urgeTriggers = if (viewModel.urgeTriggers.contains(trigger)) {
+                            viewModel.urgeTriggers.filter { it != trigger }
+                        } else {
+                            viewModel.urgeTriggers + trigger
+                        }
+                    },
+                    notes = viewModel.urgeNotes,
+                    onNotesChange = { viewModel.urgeNotes = it },
+                    viewModel = viewModel,
+                    enabled = !readOnly
+                )
+
+                // Q5: If yes, did you successfully resist the urge?
+                if (viewModel.urgeSlipped == "Yes") {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .border(1.dp, borderStrokeColor, RoundedCornerShape(18.dp)),
+                        colors = CardDefaults.cardColors(containerColor = cardBg)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                              ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(CircleShape)
+                                        .background(accentPrimary.copy(alpha = 0.15f))
+                                ) {
+                                    Text(
+                                        text = "4a",
+                                        color = accentPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                                Text(
+                                    text = "Did you successfully resist the urge?",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textPrimary,
+                                    fontSize = 15.sp
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(14.dp))
+                            
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.background)
+                                    .padding(4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                val isResistedNo = viewModel.urgeResisted == "No"
+                                val isResistedYes = viewModel.urgeResisted == "Yes"
+                                
+                                val resNoBgColor by animateColorAsState(targetValue = if (isResistedNo) Color(0xFFEF4444) else Color.Transparent, label = "res_no_bg")
+                                val resNoTextColor by animateColorAsState(targetValue = if (isResistedNo) Color.White else textSecondary, label = "res_no_txt")
+                                val resYesBgColor by animateColorAsState(targetValue = if (isResistedYes) Color(0xFF10B981) else Color.Transparent, label = "res_yes_bg")
+                                val resYesTextColor by animateColorAsState(targetValue = if (isResistedYes) Color.White else textSecondary, label = "res_yes_txt")
+
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(resNoBgColor)
+                                        .clickable(enabled = !readOnly) { viewModel.urgeResisted = "No" }
+                                ) {
+                                    Text("No", fontWeight = FontWeight.Bold, color = resNoTextColor)
+                                }
+
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(resYesBgColor)
+                                        .clickable(enabled = !readOnly) { viewModel.urgeResisted = "Yes" }
+                                ) {
+                                    Text("Yes", fontWeight = FontWeight.Bold, color = resYesTextColor)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // JOURNAL NOTES SECTION
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "Notes / Journal (Optional)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = textPrimary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                OutlinedTextField(
+                    value = viewModel.journalNotes,
+                    onValueChange = { viewModel.journalNotes = it },
+                    placeholder = { Text("How was your day? Write anything...", color = textSecondary) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    enabled = !readOnly,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = textPrimary,
+                        unfocusedTextColor = textPrimary,
+                        disabledTextColor = textPrimary.copy(alpha = 0.8f),
+                        focusedBorderColor = accentPrimary,
+                        unfocusedBorderColor = borderStrokeColor,
+                        disabledBorderColor = borderStrokeColor,
+                        focusedContainerColor = if (isDark) Color(0xFF131C2E) else Color.White,
+                        unfocusedContainerColor = if (isDark) Color(0xFF131C2E) else Color.White,
+                        disabledContainerColor = if (isDark) Color(0xFF131C2E).copy(alpha = 0.5f) else Color(0xFFF9FAFB)
+                    ),
+                    maxLines = 6
+                )
+            }
+        }
+
+        // ACTION BUTTON / SAVE
+        item {
+            if (!readOnly) {
+                Button(
+                    onClick = {
+                        // Validate basic selections
+                        if (viewModel.masturbationSlipped.isEmpty() || viewModel.pornSlipped.isEmpty() || viewModel.thoughtsSlipped.isEmpty() || viewModel.urgeSlipped.isEmpty()) {
+                            Toast.makeText(context, "Please answer all major daily questions.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.saveTodayLog()
+                            Toast.makeText(context, "Daily Reflection submitted!", Toast.LENGTH_SHORT).show()
+                            viewModel.isDailyLogReadOnly = true
+                            viewModel.showDailyLogScreen = false // Take back to Dashboard
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp)
+                        .height(54.dp)
+                        .testTag("save_log_button"),
+                    colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Lock, contentDescription = "Lock", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "SUBMIT NIGHTLY LOG",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        letterSpacing = 1.sp
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text(
+                            text = "Back to Dashboard",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                    
+                    Button(
+                        onClick = { viewModel.isDailyLogReadOnly = false },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Edit Log",
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
@@ -962,7 +2159,9 @@ fun QuestionCheckInCard(
     onTriggerToggle: (String) -> Unit,
     notes: String,
     onNotesChange: (String) -> Unit,
-    viewModel: HabitViewModel
+    viewModel: HabitViewModel,
+    enabled: Boolean = true,
+    showDropdownIcon: Boolean = true
 ) {
     val isDark = viewModel.isDarkMode
     val cardBg = MaterialTheme.colorScheme.surface
@@ -1041,11 +2240,13 @@ fun QuestionCheckInCard(
                     )
                 }
 
-                Icon(
-                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Expand",
-                    tint = textSecondary
-                )
+                if (showDropdownIcon) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Expand",
+                        tint = textSecondary
+                    )
+                }
             }
 
             // Expanded content with exact styling
@@ -1073,7 +2274,7 @@ fun QuestionCheckInCard(
                                 .fillMaxHeight()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(animatedNoBgColor)
-                                .clickable { onAnswerChange("No") }
+                                .clickable(enabled = enabled) { onAnswerChange("No") }
                         ) {
                             Text(
                                 text = "No",
@@ -1090,7 +2291,7 @@ fun QuestionCheckInCard(
                                 .fillMaxHeight()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(animatedYesBgColor)
-                                .clickable { onAnswerChange("Yes") }
+                                .clickable(enabled = enabled) { onAnswerChange("Yes") }
                         ) {
                             Text(
                                 text = "Yes",
@@ -1123,7 +2324,7 @@ fun QuestionCheckInCard(
                                     .size(36.dp)
                                     .clip(CircleShape)
                                     .background(borderStrokeColor.copy(alpha = 0.5f))
-                                    .clickable { if (count > 1) onCountChange(count - 1) }
+                                    .clickable(enabled = enabled) { if (count > 1) onCountChange(count - 1) }
                             ) {
                                 Icon(imageVector = Icons.Default.Remove, contentDescription = "Decrease", tint = textPrimary, modifier = Modifier.size(16.dp))
                             }
@@ -1139,7 +2340,7 @@ fun QuestionCheckInCard(
                                     .size(36.dp)
                                     .clip(CircleShape)
                                     .background(borderStrokeColor.copy(alpha = 0.5f))
-                                    .clickable { onCountChange(count + 1) }
+                                    .clickable(enabled = enabled) { onCountChange(count + 1) }
                             ) {
                                 Icon(imageVector = Icons.Default.Add, contentDescription = "Increase", tint = textPrimary, modifier = Modifier.size(16.dp))
                             }
@@ -1172,7 +2373,7 @@ fun QuestionCheckInCard(
                                             .clip(RoundedCornerShape(12.dp))
                                             .background(chipBg)
                                             .border(chipBorder, RoundedCornerShape(12.dp))
-                                            .clickable { onTriggerToggle(trigger) }
+                                            .clickable(enabled = enabled) { onTriggerToggle(trigger) }
                                             .padding(horizontal = 14.dp, vertical = 6.dp)
                                     ) {
                                         Text(text = trigger, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = chipText)
@@ -1192,7 +2393,7 @@ fun QuestionCheckInCard(
                                             .clip(RoundedCornerShape(12.dp))
                                             .background(chipBg)
                                             .border(chipBorder, RoundedCornerShape(12.dp))
-                                            .clickable { onTriggerToggle(trigger) }
+                                            .clickable(enabled = enabled) { onTriggerToggle(trigger) }
                                             .padding(horizontal = 14.dp, vertical = 6.dp)
                                     ) {
                                         Text(text = trigger, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = chipText)
@@ -1219,15 +2420,144 @@ fun QuestionCheckInCard(
                                 .fillMaxWidth()
                                 .height(80.dp),
                             shape = RoundedCornerShape(12.dp),
+                            readOnly = !enabled,
+                            enabled = enabled,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = textPrimary,
                                 unfocusedTextColor = textPrimary,
                                 focusedBorderColor = accentPrimary,
                                 unfocusedBorderColor = borderStrokeColor,
                                 focusedContainerColor = MaterialTheme.colorScheme.background,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.background
+                                unfocusedContainerColor = MaterialTheme.colorScheme.background,
+                                disabledTextColor = textPrimary,
+                                disabledBorderColor = borderStrokeColor,
+                                disabledContainerColor = MaterialTheme.colorScheme.background
                             )
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TriggerCheckInCard(viewModel: HabitViewModel, enabled: Boolean = true) {
+    val isExpanded = viewModel.triggerQuestionExpanded
+    val selectedTrigger = viewModel.selectedTrigger
+    val cardBg = MaterialTheme.colorScheme.surface
+    val borderStrokeColor = MaterialTheme.colorScheme.outline
+    val textPrimary = MaterialTheme.colorScheme.onBackground
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val accentPrimary = MaterialTheme.colorScheme.primary
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .border(1.dp, borderStrokeColor, RoundedCornerShape(18.dp)),
+        colors = CardDefaults.cardColors(containerColor = cardBg)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            // Header Row (Question Summary)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        onClick = { viewModel.triggerQuestionExpanded = !viewModel.triggerQuestionExpanded },
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Badge circle
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(accentPrimary.copy(alpha = 0.15f))
+                    ) {
+                        Text(
+                            text = "5",
+                            color = accentPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Text(
+                        text = "What was your biggest trigger today?",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = textPrimary,
+                        fontSize = 15.sp
+                    )
+                }
+
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Expand",
+                    tint = textSecondary
+                )
+            }
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                    val options = listOf(
+                        "Social Media",
+                        "Porn",
+                        "Stress",
+                        "Boredom",
+                        "Loneliness",
+                        "Anxiety",
+                        "Relationship",
+                        "Other"
+                    )
+                    
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        options.chunked(2).forEach { rowOptions ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowOptions.forEach { option ->
+                                    val isSelected = selectedTrigger == option
+                                    val chipBg = if (isSelected) accentPrimary else Color.Transparent
+                                    val chipText = if (isSelected) Color.White else textSecondary
+                                    val chipBorder = if (isSelected) BorderStroke(0.dp, Color.Transparent) else BorderStroke(1.dp, borderStrokeColor)
+
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(40.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(chipBg)
+                                            .border(chipBorder, RoundedCornerShape(12.dp))
+                                            .clickable(enabled = enabled) {
+                                                viewModel.selectedTrigger = if (isSelected) "" else option
+                                            }
+                                            .padding(horizontal = 8.dp)
+                                    ) {
+                                        Text(
+                                            text = option,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = chipText
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1652,8 +2982,9 @@ fun CalendarReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
                                 "Pornography" -> Color(0xFFEC4899)
                                 "Dirty Thoughts" -> Color(0xFFF59E0B)
                                 "Urge" -> Color(0xFFF97316)
+                                "ReflectionSubmission" -> Color(0xFF10B981)
                                 "Mood" -> Color(0xFF10B981)
-                                else -> accentPrimary
+                                else -> if (rec.activityType.startsWith("Trigger:")) Color(0xFF8B5CF6) else accentPrimary
                             }
 
                             val icon = when (rec.activityType) {
@@ -1661,8 +2992,9 @@ fun CalendarReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
                                 "Pornography" -> Icons.Default.VisibilityOff
                                 "Dirty Thoughts" -> Icons.Default.Psychology
                                 "Urge" -> Icons.Default.OfflineBolt
+                                "ReflectionSubmission" -> Icons.Default.CheckCircle
                                 "Mood" -> Icons.Default.EmojiEmotions
-                                else -> Icons.Default.Notes
+                                else -> if (rec.activityType.startsWith("Trigger:")) Icons.Default.Label else Icons.Default.Notes
                             }
 
                             Box(
@@ -1856,9 +3188,12 @@ fun calculatePornFreeDays(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
     val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    val reflectionDays = groupedByDay.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
+    }
     
     var count = 0
-    for ((_, dayRecords) in groupedByDay) {
+    for ((_, dayRecords) in reflectionDays) {
         val hasPorn = dayRecords.any { it.activityType == "Pornography" && it.count > 0 }
         if (!hasPorn) {
             count++
@@ -1871,9 +3206,12 @@ fun calculateMasturbationFreeDays(records: List<HabitRecord>): Int {
     if (records.isEmpty()) return 0
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
     val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    val reflectionDays = groupedByDay.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
+    }
     
     var count = 0
-    for ((_, dayRecords) in groupedByDay) {
+    for ((_, dayRecords) in reflectionDays) {
         val hasMasturbation = dayRecords.any { it.activityType == "Masturbation" && it.count > 0 }
         if (!hasMasturbation) {
             count++
@@ -1889,14 +3227,17 @@ fun calculateRecoveryScore(records: List<HabitRecord>): Int {
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
     val recentRecords = records.filter { it.timestamp >= thirtyDaysAgo }
     val groupedByDay = recentRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    val reflectionDays = groupedByDay.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
+    }
     
-    if (groupedByDay.isEmpty()) return 0
+    if (reflectionDays.isEmpty()) return 0
     
     var totalScore = 0
-    for ((_, dayRecords) in groupedByDay) {
+    for ((_, dayRecords) in reflectionDays) {
         totalScore += calculateSingleDayScore(dayRecords)
     }
-    return totalScore / groupedByDay.size
+    return totalScore / reflectionDays.size
 }
 
 fun calculateRecoveryScoreForTime(records: List<HabitRecord>, endTime: Long): Int {
@@ -1906,38 +3247,41 @@ fun calculateRecoveryScoreForTime(records: List<HabitRecord>, endTime: Long): In
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
     val recentRecords = records.filter { it.timestamp in thirtyDaysBefore..endTime }
     val groupedByDay = recentRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    val reflectionDays = groupedByDay.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
+    }
     
-    if (groupedByDay.isEmpty()) return 0
+    if (reflectionDays.isEmpty()) return 0
     
     var totalScore = 0
-    for ((_, dayRecords) in groupedByDay) {
+    for ((_, dayRecords) in reflectionDays) {
         totalScore += calculateSingleDayScore(dayRecords)
     }
-    return totalScore / groupedByDay.size
+    return totalScore / reflectionDays.size
 }
 
 fun calculateRecoveryScoreTrend(records: List<HabitRecord>): List<Float> {
-    val trend = mutableListOf<Float>()
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
-    val now = System.currentTimeMillis()
-    val oneDayMs = 24L * 60 * 60 * 1000
-    
     val groupedByDay = records.groupBy { sdf.format(java.util.Date(it.timestamp)) }
-    
-    // Generate scores for the last 7 days (including today)
-    for (i in 6 downTo 0) {
-        val targetTime = now - (i * oneDayMs)
-        val dayStr = sdf.format(java.util.Date(targetTime))
-        val dayRecords = groupedByDay[dayStr]
-        
-        val dayScore = if (dayRecords != null && dayRecords.isNotEmpty()) {
-            calculateSingleDayScore(dayRecords)
-        } else {
-            if (records.isEmpty()) 0 else 100
-        }
-        trend.add(dayScore.toFloat())
+    val reflectionDays = groupedByDay.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
     }
-    return trend
+    
+    if (reflectionDays.isEmpty()) {
+        return listOf(0f, 0f)
+    }
+    
+    val sortedDays = reflectionDays.entries.sortedBy { entry ->
+        entry.value.firstOrNull()?.timestamp ?: 0L
+    }
+    
+    val recentLoggedDays = sortedDays.takeLast(7)
+    val scores = recentLoggedDays.map { calculateSingleDayScore(it.value).toFloat() }
+    
+    if (scores.size == 1) {
+        return listOf(scores[0], scores[0])
+    }
+    return scores
 }
 
 fun calculateWeeklyImprovement(records: List<HabitRecord>): Int {
@@ -1952,19 +3296,25 @@ fun calculateWeeklyImprovement(records: List<HabitRecord>): Int {
     // This week records
     val thisWeekRecords = records.filter { it.timestamp in thisWeekStart..now }
     val thisWeekGrouped = thisWeekRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    val thisWeekReflectionDays = thisWeekGrouped.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
+    }
     
     // Last week records
     val lastWeekRecords = records.filter { it.timestamp in lastWeekStart until thisWeekStart }
     val lastWeekGrouped = lastWeekRecords.groupBy { sdf.format(java.util.Date(it.timestamp)) }
+    val lastWeekReflectionDays = lastWeekGrouped.filter { (_, dayRecords) ->
+        dayRecords.any { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge", "ReflectionSubmission") }
+    }
     
-    val thisWeekAvg = if (thisWeekGrouped.isNotEmpty()) {
-        thisWeekGrouped.map { calculateSingleDayScore(it.value) }.average().toInt()
+    val thisWeekAvg = if (thisWeekReflectionDays.isNotEmpty()) {
+        thisWeekReflectionDays.map { calculateSingleDayScore(it.value) }.average().toInt()
     } else {
         100
     }
     
-    val lastWeekAvg = if (lastWeekGrouped.isNotEmpty()) {
-        lastWeekGrouped.map { calculateSingleDayScore(it.value) }.average().toInt()
+    val lastWeekAvg = if (lastWeekReflectionDays.isNotEmpty()) {
+        lastWeekReflectionDays.map { calculateSingleDayScore(it.value) }.average().toInt()
     } else {
         100
     }
@@ -1972,48 +3322,13 @@ fun calculateWeeklyImprovement(records: List<HabitRecord>): Int {
     return thisWeekAvg - lastWeekAvg
 }
 
-fun calculateMoodTrend(records: List<HabitRecord>): String {
-    val moodRecords = records.filter { it.activityType == "Mood" }
-    if (moodRecords.isEmpty()) return "Stable"
-    
-    val now = System.currentTimeMillis()
-    val oneWeekMs = 7L * 24 * 60 * 60 * 1000
-    
-    val thisWeekMoods = moodRecords.filter { it.timestamp >= now - oneWeekMs }
-    val lastWeekMoods = moodRecords.filter { it.timestamp in (now - 2 * oneWeekMs)..(now - oneWeekMs) }
-    
-    fun getMoodWeight(index: Int): Int {
-        return when (index) {
-            0 -> 100 // 😄
-            1 -> 80  // 😊
-            2 -> 60  // 😐
-            3 -> 40  // 😟
-            4 -> 20  // 😡
-            5 -> 50  // 😴
-            6 -> 10  // 😢
-            else -> 50
-        }
-    }
-    
-    if (thisWeekMoods.isEmpty()) return "Stable"
-    val thisWeekAvg = thisWeekMoods.map { getMoodWeight(it.count) }.average()
-    
-    if (lastWeekMoods.isEmpty()) {
-        return "Stable"
-    }
-    val lastWeekAvg = lastWeekMoods.map { getMoodWeight(it.count) }.average()
-    
-    return when {
-        thisWeekAvg > lastWeekAvg + 5 -> "Improving"
-        thisWeekAvg < lastWeekAvg - 5 -> "Declining"
-        else -> "Stable"
-    }
-}
-
 data class ActiveTimeResult(val timeBlock: String, val percentageStr: String)
 
 fun calculateActiveTime(records: List<HabitRecord>): ActiveTimeResult {
-    val logs = records.filter { it.activityType != "Mood" && it.activityType != "JournalNote" && !it.activityType.startsWith("Trigger:") }
+    var logs = records.filter { it.activityType == "ReflectionSubmission" }
+    if (logs.isEmpty()) {
+        logs = records.filter { it.activityType in listOf("Masturbation", "Pornography", "Dirty Thoughts", "Urge") }
+    }
     if (logs.isEmpty()) return ActiveTimeResult("No logs yet", "0% of logs")
     
     val hourCounts = IntArray(24)
@@ -2057,6 +3372,9 @@ data class TriggerPercent(val label: String, val percent: String, val percentFlo
 
 fun calculateTriggerStatistics(records: List<HabitRecord>): List<TriggerPercent> {
     val triggerRecords = records.filter { it.activityType.startsWith("Trigger:") }
+    if (triggerRecords.isEmpty()) {
+        return emptyList()
+    }
     val colors = listOf(
         Color(0xFFEF4444),
         Color(0xFFF97316),
@@ -2065,34 +3383,6 @@ fun calculateTriggerStatistics(records: List<HabitRecord>): List<TriggerPercent>
         Color(0xFF3B82F6),
         Color(0xFF10B981)
     )
-    
-    val totalTriggersCount = triggerRecords.size
-    if (totalTriggersCount == 0) {
-        val totalSlips = records.filter { (it.activityType == "Masturbation" || it.activityType == "Pornography") && it.count > 0 }.size
-        val totalUrges = records.filter { it.activityType == "Urge" && it.count > 0 }.size
-        val totalThoughts = records.filter { it.activityType == "Dirty Thoughts" && it.count > 0 }.size
-        val fallbackTotal = totalSlips + totalUrges + totalThoughts
-        if (fallbackTotal == 0) {
-            return listOf(
-                TriggerPercent("Porn", "0%", 0f, colors[0]),
-                TriggerPercent("Urge", "0%", 0f, colors[1]),
-                TriggerPercent("Stress", "0%", 0f, colors[2]),
-                TriggerPercent("Boredom", "0%", 0f, colors[3]),
-                TriggerPercent("Other", "0%", 0f, colors[5])
-            )
-        }
-        val pornPct = (totalSlips.toFloat() / fallbackTotal * 100).toInt()
-        val urgePct = (totalUrges.toFloat() / fallbackTotal * 100).toInt()
-        val thoughtsPct = (totalThoughts.toFloat() / fallbackTotal * 100).toInt()
-        val stressPct = maxOf(0, (100 - pornPct - urgePct - thoughtsPct) / 2)
-        val otherPct = maxOf(0, 100 - pornPct - urgePct - thoughtsPct - stressPct)
-        return listOf(
-            TriggerPercent("Porn", "$pornPct%", pornPct.toFloat(), colors[0]),
-            TriggerPercent("Urge", "$urgePct%", urgePct.toFloat(), colors[1]),
-            TriggerPercent("Stress", "$stressPct%", stressPct.toFloat(), colors[2]),
-            TriggerPercent("Other", "$otherPct%", otherPct.toFloat(), colors[5])
-        )
-    }
     
     val countsMap = triggerRecords
         .map { it.activityType.substringAfter("Trigger:") }
@@ -2186,7 +3476,6 @@ fun InsightsReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
         if (weeklyImprovement >= 0) "Better than last week" else "Lower than last week"
     }
     val activeTimeRes = remember(records) { calculateActiveTime(records) }
-    val moodTrendStr = remember(records) { calculateMoodTrend(records) }
     val triggerStats = remember(records) { calculateTriggerStatistics(records) }
     val trendDays = remember {
         val list = mutableListOf<String>()
@@ -2227,10 +3516,22 @@ fun InsightsReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
                     )
                 }
                 
-                IconButton(onClick = { /* Calendar Filter */ }) {
-                    Icon(imageVector = Icons.Default.CalendarMonth, contentDescription = "Pick Date", tint = textPrimary)
+                IconButton(onClick = { viewModel.showAppUsageScreen = true }) {
+                    Icon(imageVector = Icons.Default.PhoneAndroid, contentDescription = "App Usage", tint = textPrimary)
                 }
             }
+        }
+
+        // App Usage & Screen Time Summary Card
+        item {
+            HomeAppUsageCard(
+                viewModel = viewModel,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                accentPrimary = accentPrimary,
+                borderStrokeColor = borderStrokeColor,
+                cardBg = cardBg
+            )
         }
 
         // STATS CARDS GRID - Row 1
@@ -2368,65 +3669,28 @@ fun InsightsReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
 
         // STATS CARDS GRID - Row 3
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            // Masturbation-Free Days
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(containerColor = cardBg)
             ) {
-                // Masturbation-Free Days
-                Card(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(20.dp))
-                        .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
-                    colors = CardDefaults.cardColors(containerColor = cardBg)
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Text(text = "Masturbation-Free", style = MaterialTheme.typography.bodySmall, color = textSecondary, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(text = "Masturbation-Free", style = MaterialTheme.typography.bodySmall, color = textSecondary, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(text = masturbationFreeDays.toString(), fontSize = 28.sp, fontWeight = FontWeight.Black, color = textPrimary)
-                            Icon(imageVector = Icons.Default.Shield, contentDescription = "Shield", tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
-                        }
-                        Text(text = "Days", style = MaterialTheme.typography.bodySmall, color = textSecondary)
+                        Text(text = masturbationFreeDays.toString(), fontSize = 28.sp, fontWeight = FontWeight.Black, color = textPrimary)
+                        Icon(imageVector = Icons.Default.Shield, contentDescription = "Shield", tint = Color(0xFF10B981), modifier = Modifier.size(20.dp))
                     }
-                }
-
-                if (records.isNotEmpty()) {
-                    // This Week (+X% sparkline card)
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
-                        colors = CardDefaults.cardColors(containerColor = cardBg)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(text = "This Week", style = MaterialTheme.typography.bodySmall, color = textSecondary, fontWeight = FontWeight.Bold)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            Text(text = weeklyImprovementStr, fontSize = 24.sp, fontWeight = FontWeight.Black, color = weeklyImprovementColor)
-                            Text(text = weeklyImprovementText, fontSize = 10.sp, color = textSecondary, textAlign = TextAlign.Center)
-                            
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Sparkline(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(22.dp),
-                                points = weeklyTrendPoints,
-                                lineColor = weeklyImprovementColor,
-                                strokeWidth = 2f
-                            )
-                        }
-                    }
+                    Text(text = "Days", style = MaterialTheme.typography.bodySmall, color = textSecondary)
                 }
             }
         }
@@ -2479,229 +3743,59 @@ fun InsightsReflectionScreen(viewModel: HabitViewModel, records: List<HabitRecor
                 }
             }
         } else {
-            // WEEKLY TREND LINE GRAPH SECTION
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .border(1.dp, borderStrokeColor, RoundedCornerShape(24.dp)),
-                    colors = CardDefaults.cardColors(containerColor = cardBg)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Weekly Trend",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = textPrimary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
+            // MOST COMMON TRIGGER SECTION
+            if (triggerStats.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(24.dp))
+                            .border(1.dp, borderStrokeColor, RoundedCornerShape(24.dp)),
+                        colors = CardDefaults.cardColors(containerColor = cardBg)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Most Common Trigger",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = textPrimary
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                        // Chart drawing
-                        WeeklyTrendChart(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp),
-                            points = weeklyTrendPoints,
-                            lineColor = accentPrimary
-                        )
-                        
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        // Day labels Row
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            trendDays.forEach { d ->
-                                Text(
-                                    text = d,
-                                    modifier = Modifier.weight(1f),
-                                    textAlign = TextAlign.Center,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textSecondary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // MONTHLY HEATMAP GRID
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .border(1.dp, borderStrokeColor, RoundedCornerShape(24.dp)),
-                    colors = CardDefaults.cardColors(containerColor = cardBg)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Monthly Heatmap",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = textPrimary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Grid matrix of 4 x 7 squares (representing 28 days)
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            for (r in 0 until 4) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                // Left: Donut Chart
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .size(130.dp)
                                 ) {
-                                    for (c in 0 until 7) {
-                                        val dayIndex = 27 - ((r * 7) + c)
-                                        val cellTime = System.currentTimeMillis() - (dayIndex * 24L * 60 * 60 * 1000)
-                                        val dayRecords = records.filter { isSameDay(it.timestamp, cellTime) }
-                                        
-                                        val emptyColor = if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)
-                                        
-                                        val cellColor = if (dayRecords.isEmpty()) {
-                                            emptyColor
-                                        } else {
-                                            val hasRelapse = dayRecords.any { 
-                                                (it.activityType == "Masturbation" || it.activityType == "Pornography") && it.count > 0 
-                                            }
-                                            val hasUrge = dayRecords.any { it.activityType == "Urge" && it.count > 0 }
-                                            when {
-                                                hasRelapse -> Color(0xFFEF4444)
-                                                hasUrge -> Color(0xFFF59E0B)
-                                                else -> Color(0xFF10B981)
-                                            }
-                                        }
+                                    DonutChart(
+                                        modifier = Modifier.size(110.dp),
+                                        values = triggerStats.map { it.percentFloat },
+                                        colors = triggerStats.map { it.color }
+                                    )
+                                    Text(
+                                        text = "Triggers",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = textPrimary
+                                    )
+                                }
 
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .aspectRatio(1f)
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(cellColor)
-                                        )
+                                // Right: Legend column
+                                Column(
+                                    modifier = Modifier.weight(1.2f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    triggerStats.forEach { stat ->
+                                        TriggerPercentRow(color = stat.color, label = stat.label, percent = stat.percent)
                                     }
                                 }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-                        
-                        // Heatmap indicator legend
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(text = "Less", style = MaterialTheme.typography.bodySmall, color = textSecondary)
-                            Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(if (isDark) Color(0xFF1E293B) else Color(0xFFE2E8F0)))
-                            Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF047857)))
-                            Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF059669)))
-                            Box(modifier = Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF10B981)))
-                            Text(text = "More", style = MaterialTheme.typography.bodySmall, color = textSecondary)
-                        }
-                    }
-                }
-            }
-
-            // MOST COMMON TRIGGER SECTION
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .border(1.dp, borderStrokeColor, RoundedCornerShape(24.dp)),
-                    colors = CardDefaults.cardColors(containerColor = cardBg)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Most Common Trigger",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = textPrimary
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            // Left: Donut Chart
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .size(130.dp)
-                            ) {
-                                DonutChart(
-                                    modifier = Modifier.size(110.dp),
-                                    values = triggerStats.map { it.percentFloat },
-                                    colors = triggerStats.map { it.color }
-                                )
-                                Text(
-                                    text = "Triggers",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textPrimary
-                                )
-                            }
-
-                            // Right: Legend column
-                            Column(
-                                modifier = Modifier.weight(1.2f),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                triggerStats.forEach { stat ->
-                                    TriggerPercentRow(color = stat.color, label = stat.label, percent = stat.percent)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // OTHER CARDS
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Active time card
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
-                        colors = CardDefaults.cardColors(containerColor = cardBg)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(text = "Most Active Time", style = MaterialTheme.typography.labelSmall, color = textSecondary)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(text = activeTimeRes.timeBlock, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = textPrimary)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Icon(imageVector = Icons.Default.AccessTime, contentDescription = "Clock", tint = textSecondary, modifier = Modifier.size(14.dp))
-                                Text(text = activeTimeRes.percentageStr, fontSize = 11.sp, color = textSecondary)
-                            }
-                        }
-                    }
-
-                    // Mood trends card
-                    Card(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .border(1.dp, borderStrokeColor, RoundedCornerShape(20.dp)),
-                        colors = CardDefaults.cardColors(containerColor = cardBg)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(text = "Mood Trends", style = MaterialTheme.typography.labelSmall, color = textSecondary)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            val trendColor = if (moodTrendStr == "Improving") Color(0xFF10B981) else if (moodTrendStr == "Declining") Color(0xFFEF4444) else textSecondary
-                            Text(text = moodTrendStr, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = trendColor)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Icon(imageVector = Icons.Default.SentimentSatisfiedAlt, contentDescription = "Smile", tint = textSecondary, modifier = Modifier.size(14.dp))
-                                Text(text = "This month", fontSize = 11.sp, color = textSecondary)
                             }
                         }
                     }
@@ -2859,7 +3953,16 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
     val accentPrimary = MaterialTheme.colorScheme.primary
     val borderStrokeColor = MaterialTheme.colorScheme.outline
     val cardBg = MaterialTheme.colorScheme.surface
-    var showGoogleChooserInSettings by remember { mutableStateOf(false) }
+    var showPhotoOptionsDialog by remember { mutableStateOf(false) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.updateCustomProfilePicture(context, uri.toString())
+            Toast.makeText(context, "Profile picture updated successfully!", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -2916,27 +4019,58 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // Interactive Avatar Emoji Selector
+                            // Interactive Avatar with Camera Badge
+                            val activePhotoUrl = when {
+                                viewModel.customProfilePictureUri.isNotEmpty() -> viewModel.customProfilePictureUri
+                                viewModel.loginType == "Google" && viewModel.googleProfilePictureUrl.isNotEmpty() -> viewModel.googleProfilePictureUrl
+                                else -> ""
+                            }
                             val selectedEmoji = viewModel.userAvatarEmoji
+
                             Box(
                                 modifier = Modifier
-                                    .size(64.dp)
+                                    .size(72.dp)
                                     .clip(CircleShape)
-                                    .background(accentPrimary.copy(alpha = 0.15f))
-                                    .border(1.5.dp, accentPrimary, CircleShape),
-                                contentAlignment = Alignment.Center
+                                    .clickable { showPhotoOptionsDialog = true }
                             ) {
-                                if (viewModel.loginType == "Google" && viewModel.googleProfilePictureUrl.isNotEmpty()) {
-                                    coil.compose.AsyncImage(
-                                        model = viewModel.googleProfilePictureUrl,
-                                        contentDescription = "Google Profile Picture",
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                    )
-                                } else {
-                                    Text(
-                                        text = selectedEmoji,
-                                        fontSize = 32.sp
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(CircleShape)
+                                        .background(accentPrimary.copy(alpha = 0.15f))
+                                        .border(1.5.dp, accentPrimary, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (activePhotoUrl.isNotEmpty()) {
+                                        coil.compose.AsyncImage(
+                                            model = activePhotoUrl,
+                                            contentDescription = "Profile Picture",
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                        )
+                                    } else {
+                                        Text(
+                                            text = selectedEmoji,
+                                            fontSize = 36.sp
+                                        )
+                                    }
+                                }
+
+                                // Camera badge overlay
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .align(Alignment.BottomEnd)
+                                        .clip(CircleShape)
+                                        .background(accentPrimary)
+                                        .border(1.5.dp, cardBg, CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CameraAlt,
+                                        contentDescription = "Change Photo",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
                                     )
                                 }
                             }
@@ -2957,6 +4091,27 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                OutlinedButton(
+                                    onClick = { showPhotoOptionsDialog = true },
+                                    modifier = Modifier.height(32.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.PhotoCamera,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = if (activePhotoUrl.isNotEmpty()) "Change Photo" else "Upload Photo",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
 
@@ -3044,7 +4199,15 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                             } else {
                                 Button(
                                     onClick = {
-                                        showGoogleChooserInSettings = true
+                                        viewModel.authenticateWithGoogle(
+                                            context = context,
+                                            onSuccess = {
+                                                Toast.makeText(context, "Successfully logged in as ${viewModel.userName}!", Toast.LENGTH_SHORT).show()
+                                            },
+                                            onFailure = { errorMsg ->
+                                                Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = accentPrimary),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -3259,7 +4422,16 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                             label = "Daily Reminder",
                             value = viewModel.dailyReminderTime,
                             onClick = {
-                                viewModel.dailyReminderTime = if (viewModel.dailyReminderTime == "9:00 PM") "8:30 PM" else "9:00 PM"
+                                val picker = android.app.TimePickerDialog(
+                                    context,
+                                    { _, hour, minute ->
+                                        val amPm = if (hour < 12) "AM" else "PM"
+                                        val h = if (hour % 12 == 0) 12 else hour % 12
+                                        viewModel.dailyReminderTime = String.format("%d:%02d %s", h, minute, amPm)
+                                    },
+                                    21, 0, false
+                                )
+                                picker.show()
                             },
                             isDark = isDark
                         )
@@ -3268,7 +4440,16 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                             label = "Reflection Reminder",
                             value = viewModel.reflectionReminderTime,
                             onClick = {
-                                viewModel.reflectionReminderTime = if (viewModel.reflectionReminderTime == "10:00 PM") "10:30 PM" else "10:00 PM"
+                                val picker = android.app.TimePickerDialog(
+                                    context,
+                                    { _, hour, minute ->
+                                        val amPm = if (hour < 12) "AM" else "PM"
+                                        val h = if (hour % 12 == 0) 12 else hour % 12
+                                        viewModel.reflectionReminderTime = String.format("%d:%02d %s", h, minute, amPm)
+                                    },
+                                    22, 0, false
+                                )
+                                picker.show()
                             },
                             isDark = isDark
                         )
@@ -3595,23 +4776,129 @@ fun SettingsReflectionScreen(viewModel: HabitViewModel) {
                     fontWeight = FontWeight.Bold,
                     color = textSecondary
                 )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Developed by Jabir Mahbul",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = textSecondary.copy(alpha = 0.8f)
+                )
             }
         }
     }
 
-    if (showGoogleChooserInSettings) {
-        LaunchedEffect(showGoogleChooserInSettings) {
-            showGoogleChooserInSettings = false
-            viewModel.authenticateWithGoogle(
-                context = context,
-                onSuccess = {
-                    Toast.makeText(context, "Successfully logged in as ${viewModel.userName}!", Toast.LENGTH_SHORT).show()
-                },
-                onFailure = { errorMsg ->
-                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+    if (showPhotoOptionsDialog) {
+        var imageUrlInput by remember { mutableStateOf("") }
+        var isEnteringUrl by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showPhotoOptionsDialog = false },
+            title = {
+                Text("Profile Photo", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (!isEnteringUrl) {
+                        // Option 1: Pick from Gallery
+                        OutlinedButton(
+                            onClick = {
+                                showPhotoOptionsDialog = false
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Upload from Device Gallery")
+                        }
+
+                        // Option 2: Enter Web Image URL
+                        OutlinedButton(
+                            onClick = { isEnteringUrl = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Enter Image URL")
+                        }
+
+                        // Option 3: Use Google Profile Photo if available
+                        if (viewModel.googleProfilePictureUrl.isNotEmpty()) {
+                            OutlinedButton(
+                                onClick = {
+                                    showPhotoOptionsDialog = false
+                                    viewModel.updateCustomProfilePicture(context, "")
+                                    Toast.makeText(context, "Using Google Profile Photo", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Use Google Profile Photo")
+                            }
+                        }
+
+                        // Option 4: Clear Photo / Use Emoji Avatar
+                        if (viewModel.customProfilePictureUri.isNotEmpty() || viewModel.googleProfilePictureUrl.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    showPhotoOptionsDialog = false
+                                    viewModel.updateCustomProfilePicture(context, "")
+                                    Toast.makeText(context, "Profile picture cleared", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Remove Photo & Use Emoji Avatar", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = imageUrlInput,
+                            onValueChange = { imageUrlInput = it },
+                            label = { Text("Image URL") },
+                            placeholder = { Text("https://example.com/photo.jpg") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                        ) {
+                            TextButton(onClick = { isEnteringUrl = false }) {
+                                Text("Back")
+                            }
+                            Button(
+                                onClick = {
+                                    if (imageUrlInput.isNotBlank()) {
+                                        viewModel.updateCustomProfilePicture(context, imageUrlInput)
+                                        showPhotoOptionsDialog = false
+                                        Toast.makeText(context, "Profile picture updated!", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            ) {
+                                Text("Save Photo")
+                            }
+                        }
+                    }
                 }
-            )
-        }
+            },
+            confirmButton = {},
+            dismissButton = {
+                if (!isEnteringUrl) {
+                    TextButton(onClick = { showPhotoOptionsDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            }
+        )
     }
 }
 
@@ -3679,3 +4966,57 @@ data class CalendarDay(
     val timestamp: Long = 0,
     val isPadding: Boolean = false
 )
+
+data class RecoveryAchievement(
+    val title: String,
+    val description: String,
+    val icon: ImageVector
+)
+
+fun calculateRecentAchievement(records: List<HabitRecord>): RecoveryAchievement {
+    val totalLogs = records.filter { it.activityType == "ReflectionSubmission" }.size
+    val currentStreak = calculateCurrentStreak(records)
+    
+    return when {
+        currentStreak >= 30 -> RecoveryAchievement(
+            title = "Golden Champion",
+            description = "Maintained a perfect 30-day streak of solid self-control!",
+            icon = Icons.Default.EmojiEvents
+        )
+        currentStreak >= 7 -> RecoveryAchievement(
+            title = "Sovereign Mind",
+            description = "Resisted urges successfully for an entire week!",
+            icon = Icons.Default.Shield
+        )
+        totalLogs >= 10 -> RecoveryAchievement(
+            title = "Dedicated Warrior",
+            description = "Completed 10 daily reflection logs. Remarkable discipline!",
+            icon = Icons.Default.MenuBook
+        )
+        totalLogs >= 3 -> RecoveryAchievement(
+            title = "Self-Awareness Novice",
+            description = "Completed your first 3 reflections. Great start!",
+            icon = Icons.Default.Whatshot
+        )
+        else -> RecoveryAchievement(
+            title = "Fresh Beginning",
+            description = "Set off on your mindful recovery journey with us.",
+            icon = Icons.Default.Star
+        )
+    }
+}
+
+fun getDailyMotivationalQuote(): Pair<String, String> {
+    val quotes = listOf(
+        "He who conquers himself is the mightiest warrior." to "Socrates",
+        "It does not matter how slowly you go as long as you do not stop." to "Confucius",
+        "Discipline is the bridge between goals and accomplishment." to "Jim Rohn",
+        "The best way to predict your future is to create it." to "Abraham Lincoln",
+        "The secret of change is to focus all of your energy, not on fighting the old, but on building the new." to "Socrates",
+        "You have power over your mind - not outside events. Realize this, and you will find strength." to "Marcus Aurelius",
+        "We are what we repeatedly do. Excellence, then, is not an act, but a habit." to "Aristotle"
+    )
+    val calendar = Calendar.getInstance()
+    val day = calendar.get(Calendar.DAY_OF_MONTH)
+    return quotes[day % quotes.size]
+}

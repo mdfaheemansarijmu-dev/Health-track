@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Jagr</string>
+    <string name="default_web_client_id">33764241003-ummvv34ul4r1s9tiiq0ko5e2ehrugta6.apps.googleusercontent.com</string>
+    <string name="accessibility_service_description">Jagr Browser Protection monitors address bars and active URLs in web browsers to detect and protect against adult websites and distractions.</string>
 </resources>

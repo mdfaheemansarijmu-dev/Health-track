@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -435,8 +437,12 @@ fun ShieldReflectionAnimation(color: Color) {
 @Composable
 fun LoginScreen(viewModel: HabitViewModel) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var showGoogleChooser by remember { mutableStateOf(false) }
+    var isSignUpMode by remember { mutableStateOf(false) }
+    var emailInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
+    var nameInput by remember { mutableStateOf("") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
+    var localErrorMessage by remember { mutableStateOf<String?>(null) }
 
     val isDark = viewModel.isDarkMode
     val background = MaterialTheme.colorScheme.background
@@ -454,7 +460,8 @@ fun LoginScreen(viewModel: HabitViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(24.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
@@ -463,13 +470,13 @@ fun LoginScreen(viewModel: HabitViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 40.dp)
+                    .padding(top = 16.dp)
             ) {
                 // Circular Glowing Logo
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(22.dp))
+                        .size(68.dp)
+                        .clip(RoundedCornerShape(20.dp))
                         .background(
                             Brush.linearGradient(
                                 colors = listOf(accentPrimary, Color(0xFF10B981))
@@ -481,39 +488,264 @@ fun LoginScreen(viewModel: HabitViewModel) {
                         imageVector = Icons.Default.FilterVintage,
                         contentDescription = "Logo",
                         tint = Color.White,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(34.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Welcome to Jagr",
-                    fontSize = 28.sp,
+                    text = if (isSignUpMode) "Create Firebase Account" else "Welcome to Jagr",
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
                     color = textPrimary,
                     letterSpacing = (-0.5).sp
                 )
                 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = "Your daily companion for positive habits, physical tracking, & mindful reflection.",
-                    fontSize = 14.sp,
+                    text = if (isSignUpMode) "Join Jagr with Firebase Authentication to sync habits across devices." else "Sign in with your Firebase account or Google to sync habits securely.",
+                    fontSize = 13.sp,
                     color = textSecondary,
                     textAlign = TextAlign.Center,
-                    lineHeight = 20.sp,
-                    modifier = Modifier.padding(horizontal = 20.dp)
+                    lineHeight = 18.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
 
-            // Authentication options card
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Firebase Authentication Form Container
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, borderStrokeColor.copy(alpha = 0.6f), RoundedCornerShape(20.dp)),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = cardBg),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Sign In / Sign Up Mode Tab Switcher
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (!isSignUpMode) accentPrimary else Color.Transparent)
+                                .clickable {
+                                    isSignUpMode = false
+                                    localErrorMessage = null
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Sign In",
+                                color = if (!isSignUpMode) Color.White else textSecondary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSignUpMode) accentPrimary else Color.Transparent)
+                                .clickable {
+                                    isSignUpMode = true
+                                    localErrorMessage = null
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Register",
+                                color = if (isSignUpMode) Color.White else textSecondary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+
+                    // Display Name (Only in Register mode)
+                    if (isSignUpMode) {
+                        OutlinedTextField(
+                            value = nameInput,
+                            onValueChange = { nameInput = it },
+                            label = { Text("Full Name") },
+                            placeholder = { Text("e.g. Alex Mercer") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(20.dp))
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    // Email Input Field
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { emailInput = it },
+                        label = { Text("Email Address") },
+                        placeholder = { Text("you@example.com") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Password Input Field
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text("Password") },
+                        placeholder = { Text("••••••••") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(20.dp))
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (isPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = "Toggle password visibility",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
+                        visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Error message callout if present
+                    if (localErrorMessage != null) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = localErrorMessage!!,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    // Primary Firebase Submit Button
+                    Button(
+                        onClick = {
+                            localErrorMessage = null
+                            if (isSignUpMode) {
+                                viewModel.signUpWithFirebaseEmail(
+                                    context = context,
+                                    email = emailInput,
+                                    pass = passwordInput,
+                                    name = nameInput,
+                                    onSuccess = {
+                                        Toast.makeText(context, "Welcome! Firebase account created successfully.", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onFailure = { err ->
+                                        localErrorMessage = err
+                                    }
+                                )
+                            } else {
+                                viewModel.loginWithFirebaseEmail(
+                                    context = context,
+                                    email = emailInput,
+                                    pass = passwordInput,
+                                    onSuccess = {
+                                        Toast.makeText(context, "Logged in as ${viewModel.userName}!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onFailure = { err ->
+                                        localErrorMessage = err
+                                    }
+                                )
+                            }
+                        },
+                        enabled = !viewModel.isAuthenticating,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accentPrimary)
+                    ) {
+                        if (viewModel.isAuthenticating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Authenticating...", fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(
+                                imageVector = if (isSignUpMode) Icons.Default.PersonAdd else Icons.Default.Login,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = if (isSignUpMode) "Create Firebase Account" else "Sign In with Firebase",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Divider & Alternative Methods
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = borderStrokeColor.copy(alpha = 0.5f))
+                    Text(
+                        text = "  OR  ",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = textSecondary
+                    )
+                    HorizontalDivider(modifier = Modifier.weight(1f), color = borderStrokeColor.copy(alpha = 0.5f))
+                }
+
                 // Google Login Button
-                Card(
+                OutlinedButton(
                     onClick = {
                         if (!viewModel.isAuthenticating) {
                             viewModel.authenticateWithGoogle(
@@ -522,130 +754,102 @@ fun LoginScreen(viewModel: HabitViewModel) {
                                     Toast.makeText(context, "Successfully logged in as ${viewModel.userName}!", Toast.LENGTH_SHORT).show()
                                 },
                                 onFailure = { errorMsg ->
-                                    Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show()
                                 }
                             )
                         }
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(56.dp)
-                        .border(1.dp, borderStrokeColor, RoundedCornerShape(16.dp)),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = cardBg),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, borderStrokeColor)
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        if (viewModel.isAuthenticating) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = accentPrimary,
-                                strokeWidth = 2.5.dp
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = "Connecting securely...",
-                                color = textPrimary.copy(alpha = 0.7f),
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        } else {
-                            // Styled multi-color Google "G" representation inside Canvas
-                            Canvas(modifier = Modifier.size(24.dp)) {
-                                val w = size.width
-                                val h = size.height
-                                // Red segment path
-                                val redPath = Path().apply {
-                                    moveTo(w * 0.5f, h * 0.5f)
-                                    lineTo(w * 0.95f, h * 0.35f)
-                                    arcTo(
-                                        rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
-                                        startAngleDegrees = -18f,
-                                        sweepAngleDegrees = -135f,
-                                        forceMoveTo = false
-                                    )
-                                    close()
-                                }
-                                drawPath(redPath, Color(0xFFEA4335))
-
-                                // Yellow segment path
-                                val yellowPath = Path().apply {
-                                    moveTo(w * 0.5f, h * 0.5f)
-                                    arcTo(
-                                        rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
-                                        startAngleDegrees = -153f,
-                                        sweepAngleDegrees = -72f,
-                                        forceMoveTo = true
-                                    )
-                                    close()
-                                }
-                                drawPath(yellowPath, Color(0xFFFBBC05))
-
-                                // Green segment path
-                                val greenPath = Path().apply {
-                                    moveTo(w * 0.5f, h * 0.5f)
-                                    arcTo(
-                                        rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
-                                        startAngleDegrees = -225f,
-                                        sweepAngleDegrees = -70f,
-                                        forceMoveTo = true
-                                    )
-                                    close()
-                                }
-                                drawPath(greenPath, Color(0xFF34A853))
-
-                                // Blue segment path
-                                val bluePath = Path().apply {
-                                    moveTo(w * 0.5f, h * 0.5f)
-                                    lineTo(w * 0.95f, h * 0.5f)
-                                    arcTo(
-                                        rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
-                                        startAngleDegrees = 0f,
-                                        sweepAngleDegrees = -65f,
-                                        forceMoveTo = false
-                                    )
-                                    close()
-                                }
-                                drawPath(bluePath, Color(0xFF4285F4))
+                        Canvas(modifier = Modifier.size(20.dp)) {
+                            val w = size.width
+                            val h = size.height
+                            val redPath = Path().apply {
+                                moveTo(w * 0.5f, h * 0.5f)
+                                lineTo(w * 0.95f, h * 0.35f)
+                                arcTo(
+                                    rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
+                                    startAngleDegrees = -18f,
+                                    sweepAngleDegrees = -135f,
+                                    forceMoveTo = false
+                                )
+                                close()
                             }
+                            drawPath(redPath, Color(0xFFEA4335))
 
-                            Spacer(modifier = Modifier.width(12.dp))
+                            val yellowPath = Path().apply {
+                                moveTo(w * 0.5f, h * 0.5f)
+                                arcTo(
+                                    rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
+                                    startAngleDegrees = -153f,
+                                    sweepAngleDegrees = -72f,
+                                    forceMoveTo = true
+                                )
+                                close()
+                            }
+                            drawPath(yellowPath, Color(0xFFFBBC05))
 
-                            Text(
-                                text = "Continue with Google",
-                                color = textPrimary,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            val greenPath = Path().apply {
+                                moveTo(w * 0.5f, h * 0.5f)
+                                arcTo(
+                                    rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
+                                    startAngleDegrees = -225f,
+                                    sweepAngleDegrees = -70f,
+                                    forceMoveTo = true
+                                )
+                                close()
+                            }
+                            drawPath(greenPath, Color(0xFF34A853))
+
+                            val bluePath = Path().apply {
+                                moveTo(w * 0.5f, h * 0.5f)
+                                lineTo(w * 0.95f, h * 0.5f)
+                                arcTo(
+                                    rect = androidx.compose.ui.geometry.Rect(0f, 0f, w, h),
+                                    startAngleDegrees = 0f,
+                                    sweepAngleDegrees = -65f,
+                                    forceMoveTo = false
+                                )
+                                close()
+                            }
+                            drawPath(bluePath, Color(0xFF4285F4))
                         }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Text(
+                            text = "Continue with Google",
+                            color = textPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                 }
 
                 // Guest mode button
-                Card(
+                TextButton(
                     onClick = {
-                        viewModel.loginAsGuest(context)
-                        Toast.makeText(context, "Welcome as Guest Visitor!", Toast.LENGTH_SHORT).show()
+                        viewModel.loginAsGuestFirebase(
+                            context = context,
+                            onSuccess = {
+                                Toast.makeText(context, "Welcome as Guest Visitor!", Toast.LENGTH_SHORT).show()
+                            },
+                            onFailure = {
+                                Toast.makeText(context, "Guest mode activated.", Toast.LENGTH_SHORT).show()
+                            }
+                        )
                     },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .border(
-                            width = 1.dp,
-                            color = accentPrimary.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(16.dp)
-                        ),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxSize(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
@@ -653,18 +857,20 @@ fun LoginScreen(viewModel: HabitViewModel) {
                             imageVector = Icons.Default.DirectionsWalk,
                             contentDescription = null,
                             tint = accentPrimary,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Explore as Guest",
+                            text = "Explore as Guest Visitor",
                             color = accentPrimary,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Legal notice disclaimer
             Text(
@@ -676,205 +882,6 @@ fun LoginScreen(viewModel: HabitViewModel) {
             )
         }
     }
-
-    // Interactive custom Google accounts dialog chooser
-    if (showGoogleChooser) {
-        GoogleAccountChooserDialog(
-            viewModel = viewModel,
-            onDismiss = { showGoogleChooser = false },
-            onAccountSelected = { name, email ->
-                showGoogleChooser = false
-                viewModel.loginWithGoogle(context, email, name)
-                Toast.makeText(context, "Successfully logged in as $name!", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
 }
 
-@Composable
-fun GoogleAccountChooserDialog(
-    viewModel: HabitViewModel,
-    onDismiss: () -> Unit,
-    onAccountSelected: (name: String, email: String) -> Unit
-) {
-    var customEmail by remember { mutableStateOf("") }
-    var customName by remember { mutableStateOf("") }
-    var isAddingCustom by remember { mutableStateOf(false) }
 
-    val accentPrimary = MaterialTheme.colorScheme.primary
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AccountCircle,
-                    contentDescription = null,
-                    tint = accentPrimary
-                )
-                Text(
-                    text = "Choose an account",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "to continue to Jagr app",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (!isAddingCustom) {
-                    // Predefined mock Google account options
-                    GoogleAccountRow(
-                        name = "Jerome S.",
-                        email = "jerome.steps@gmail.com",
-                        avatarColor = Color(0xFF6C63FF),
-                        onClick = { onAccountSelected("Jerome", "jerome.steps@gmail.com") }
-                    )
-
-                    GoogleAccountRow(
-                        name = "Alex Mercer",
-                        email = "alex.mercer@gmail.com",
-                        avatarColor = Color(0xFF10B981),
-                        onClick = { onAccountSelected("Alex", "alex.mercer@gmail.com") }
-                    )
-
-                    // Button to add another custom account
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { isAddingCustom = true }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            text = "Use another account",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                } else {
-                    // Fields to enter custom Google account details
-                    OutlinedTextField(
-                        value = customName,
-                        onValueChange = { customName = it },
-                        label = { Text("Your Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = customEmail,
-                        onValueChange = { customEmail = it },
-                        label = { Text("Google Email") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
-                    ) {
-                        TextButton(onClick = { isAddingCustom = false }) {
-                            Text("Back")
-                        }
-                        Button(
-                            onClick = {
-                                if (customName.isNotBlank() && customEmail.isNotBlank()) {
-                                    onAccountSelected(customName, customEmail)
-                                } else {
-                                    onAccountSelected("Jerome", "jerome.steps@gmail.com")
-                                }
-                            }
-                        ) {
-                            Text("Sign In")
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            if (!isAddingCustom) {
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel")
-                }
-            }
-        }
-    )
-}
-
-@Composable
-fun GoogleAccountRow(
-    name: String,
-    email: String,
-    avatarColor: Color,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .border(
-                1.dp,
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
-                RoundedCornerShape(12.dp)
-            )
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(avatarColor),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = name.take(1).uppercase(),
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp
-            )
-        }
-        Column {
-            Text(
-                text = name,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = email,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}

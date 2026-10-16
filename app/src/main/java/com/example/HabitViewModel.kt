@@ -20,6 +20,9 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialUnsupportedException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.UserProfileChangeRequest
 
 class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     val uiState: StateFlow<List<HabitRecord>> = repository.allRecords
@@ -171,11 +174,146 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         loginType = sharedPref.getString("login_type", "") ?: ""
         googleUserId = sharedPref.getString("google_user_id", "") ?: ""
         googleProfilePictureUrl = sharedPref.getString("google_profile_picture_url", "") ?: ""
+        customProfilePictureUri = sharedPref.getString("custom_profile_picture_uri", "") ?: ""
         dismissedUpdateVersion = sharedPref.getString("dismissed_update_version", "") ?: ""
         updateCheckUrl = sharedPref.getString("update_check_url", "https://raw.githubusercontent.com/FaheemAnsari/Jagr/main/update.json") ?: "https://raw.githubusercontent.com/FaheemAnsari/Jagr/main/update.json"
         
+        try {
+            val currentUser = FirebaseAuth.getInstance().currentUser
+            if (currentUser != null) {
+                isLoggedIn = true
+                loggedInEmail = currentUser.email ?: loggedInEmail
+                if (!currentUser.displayName.isNullOrBlank()) {
+                    userName = currentUser.displayName!!
+                }
+                if (currentUser.photoUrl != null && currentUser.photoUrl.toString().isNotEmpty()) {
+                    googleProfilePictureUrl = currentUser.photoUrl.toString()
+                }
+            }
+        } catch (e: Exception) {
+            // Firebase Auth initialization check safely wrapped
+        }
+
+        loadChallenges(context)
+
         // Trigger check for updates immediately on app launch (guaranteeing settings are loaded)
         checkForUpdates(manual = false)
+    }
+
+    // Challenge System States & Actions
+    var challengesList by mutableStateOf<List<HabitChallenge>>(emptyList())
+    var activeChallenge by mutableStateOf<HabitChallenge?>(null)
+    var showCreateChallengeDialog by mutableStateOf(false)
+    var showCheckInDialogForChallenge by mutableStateOf<HabitChallenge?>(null)
+
+    val activeChallengesList: List<HabitChallenge>
+        get() = challengesList.filter { it.isActive && !it.isCompleted }
+
+    fun loadChallenges(context: android.content.Context) {
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        val jsonStr = sharedPref.getString("user_challenges_json", "") ?: ""
+        
+        val list = deserializeChallenges(jsonStr)
+        challengesList = list
+        activeChallenge = list.firstOrNull { it.isActive && !it.isCompleted } ?: list.firstOrNull()
+        
+        updateAllChallengeNotifications(context, challengesList)
+    }
+
+    private fun saveChallengesInternal(context: android.content.Context, list: List<HabitChallenge>) {
+        val jsonStr = serializeChallenges(list)
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with(sharedPref.edit()) {
+            putString("user_challenges_json", jsonStr)
+            apply()
+        }
+    }
+
+    fun saveChallenges(context: android.content.Context) {
+        saveChallengesInternal(context, challengesList)
+        activeChallenge = challengesList.firstOrNull { it.isActive && !it.isCompleted } ?: challengesList.firstOrNull()
+        updateAllChallengeNotifications(context, challengesList)
+    }
+
+    fun createNewChallenge(
+        context: android.content.Context,
+        habitName: String,
+        totalDays: Int,
+        attendanceTime: String,
+        showLockscreen: Boolean
+    ) {
+        val daysList = (1..totalDays).map { dayNum ->
+            ChallengeDayRecord(dayNumber = dayNum, status = "PENDING")
+        }
+        
+        val updatedList = challengesList.toMutableList()
+
+        val newChallenge = HabitChallenge(
+            id = java.util.UUID.randomUUID().toString(),
+            title = "$totalDays-Day Challenge: $habitName",
+            habitName = habitName,
+            totalDays = totalDays,
+            startTimestamp = System.currentTimeMillis(),
+            attendanceTime = attendanceTime,
+            showLockscreenNotification = showLockscreen,
+            isCompleted = false,
+            isActive = true,
+            dayRecords = daysList
+        )
+
+        updatedList.add(0, newChallenge)
+        challengesList = updatedList
+        activeChallenge = newChallenge
+        saveChallenges(context)
+    }
+
+    fun submitChallengeAttendance(
+        context: android.content.Context,
+        challengeId: String,
+        dayNumber: Int,
+        isSuccess: Boolean,
+        notes: String
+    ) {
+        val updatedList = challengesList.map { challenge ->
+            if (challenge.id == challengeId) {
+                val updatedRecords = challenge.dayRecords.map { dayRecord ->
+                    if (dayRecord.dayNumber == dayNumber) {
+                        dayRecord.copy(
+                            status = if (isSuccess) "SUCCESS" else "FAILED",
+                            notes = notes,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    } else dayRecord
+                }
+                val allDone = updatedRecords.all { it.status != "PENDING" }
+                challenge.copy(
+                    dayRecords = updatedRecords,
+                    isCompleted = allDone
+                )
+            } else challenge
+        }
+
+        challengesList = updatedList
+        saveChallenges(context)
+    }
+
+    fun toggleChallengeNotification(context: android.content.Context, challengeId: String, enabled: Boolean) {
+        val updatedList = challengesList.map { challenge ->
+            if (challenge.id == challengeId) {
+                challenge.copy(showLockscreenNotification = enabled)
+            } else challenge
+        }
+        challengesList = updatedList
+        saveChallenges(context)
+    }
+
+    fun deleteChallenge(context: android.content.Context, challengeId: String) {
+        val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        notificationManager?.cancel(challengeId.hashCode())
+
+        val updatedList = challengesList.filterNot { it.id == challengeId }
+        challengesList = updatedList
+        saveChallenges(context)
     }
 
     fun dismissOptionalUpdate(context: android.content.Context) {
@@ -205,8 +343,18 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     var loginType by mutableStateOf("") // "Google" or "Guest"
     var googleUserId by mutableStateOf("")
     var googleProfilePictureUrl by mutableStateOf("")
+    var customProfilePictureUri by mutableStateOf("")
     var isAuthenticating by mutableStateOf(false)
     var authenticationError by mutableStateOf<String?>(null)
+
+    fun updateCustomProfilePicture(context: android.content.Context, uriString: String) {
+        customProfilePictureUri = uriString
+        val sharedPref = context.getSharedPreferences("user_prefs", android.content.Context.MODE_PRIVATE)
+        with (sharedPref.edit()) {
+            putString("custom_profile_picture_uri", uriString)
+            apply()
+        }
+    }
 
     fun completeOnboarding(context: android.content.Context) {
         isOnboardingCompleted = true
@@ -214,6 +362,25 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         with (sharedPref.edit()) {
             putBoolean("is_onboarding_completed", true)
             apply()
+        }
+    }
+
+    private fun fetchDeviceGoogleAccount(context: android.content.Context): Pair<String, String>? {
+        return try {
+            val am = android.accounts.AccountManager.get(context)
+            val accounts = am.getAccountsByType("com.google")
+            if (accounts.isNotEmpty()) {
+                val email = accounts[0].name
+                val nameParts = email.substringBefore("@").split(".", "_", "-")
+                val formattedName = nameParts.joinToString(" ") { word ->
+                    word.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                }
+                Pair(email, if (formattedName.isNotBlank()) formattedName else "Google User")
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -225,79 +392,106 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         viewModelScope.launch {
             isAuthenticating = true
             authenticationError = null
+            var authenticated = false
+
             try {
-                // Safely read from BuildConfig without forcing a compile-time failure
-                val rawClientId = try {
-                    val buildConfigClass = Class.forName("com.example.BuildConfig")
-                    val field = buildConfigClass.getField("GOOGLE_WEB_CLIENT_ID")
-                    field.get(null) as? String ?: ""
+                val targetClientId = try {
+                    context.getString(com.example.R.string.default_web_client_id)
                 } catch (e: Exception) {
-                    ""
-                }
-                
-                val clientId = if (rawClientId.isBlank() || rawClientId == "YOUR_GOOGLE_WEB_CLIENT_ID") {
-                    // Fallback client ID so that it doesn't fail compilation or execution, but triggers standard sign-in prompt
-                    "1079547613754-dummyclientid123456.apps.googleusercontent.com"
-                } else {
-                    rawClientId
+                    "33764241003-ummvv34ul4r1s9tiiq0ko5e2ehrugta6.apps.googleusercontent.com"
                 }
 
                 val credentialManager = CredentialManager.create(context)
+                
+                var result: androidx.credentials.GetCredentialResponse? = null
+                try {
+                    val googleIdOption = GetGoogleIdOption.Builder()
+                        .setServerClientId(targetClientId)
+                        .setFilterByAuthorizedAccounts(true)
+                        .setAutoSelectEnabled(true)
+                        .build()
 
-                val googleIdOption = GetGoogleIdOption.Builder()
-                    .setFilterByAuthorizedAccounts(false)
-                    .setServerClientId(clientId)
-                    .setAutoSelectEnabled(false)
-                    .build()
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(googleIdOption)
+                        .build()
 
-                val request = GetCredentialRequest.Builder()
-                    .addCredentialOption(googleIdOption)
-                    .build()
+                    result = credentialManager.getCredential(
+                        context = context,
+                        request = request
+                    )
+                } catch (e: Exception) {
+                    // Retry with filterByAuthorizedAccounts = false to allow new account selection
+                    val googleIdOption = GetGoogleIdOption.Builder()
+                        .setServerClientId(targetClientId)
+                        .setFilterByAuthorizedAccounts(false)
+                        .setAutoSelectEnabled(false)
+                        .build()
 
-                val result = credentialManager.getCredential(
-                    context = context,
-                    request = request
-                )
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(googleIdOption)
+                        .build()
 
-                val credential = result.credential
-                if (credential is androidx.credentials.CustomCredential && 
-                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                    
-                    val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
-                    val email = googleIdTokenCredential.id
-                    val displayName = googleIdTokenCredential.displayName ?: "Google User"
-                    val photoUrl = googleIdTokenCredential.profilePictureUri?.toString() ?: ""
-                    
-                    val subId = try {
-                        googleIdTokenCredential.id
-                    } catch (e: Exception) {
-                        email
+                    result = credentialManager.getCredential(
+                        context = context,
+                        request = request
+                    )
+                }
+
+                if (result != null) {
+                    val credential = result.credential
+                    if (credential is androidx.credentials.CustomCredential && 
+                        credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                        
+                        val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                        val email = googleIdTokenCredential.id
+                        val displayName = googleIdTokenCredential.displayName ?: "Google User"
+                        val photoUrl = googleIdTokenCredential.profilePictureUri?.toString() ?: ""
+                        val idToken = googleIdTokenCredential.idToken
+
+                        // Also authenticate with Firebase Auth via Google ID Token if idToken is available
+                        if (idToken.isNotBlank()) {
+                            try {
+                                val firebaseCredential = GoogleAuthProvider.getCredential(idToken, null)
+                                FirebaseAuth.getInstance().signInWithCredential(firebaseCredential)
+                                    .addOnSuccessListener { authResult ->
+                                        val fbUser = authResult.user
+                                        saveGoogleProfile(
+                                            context = context,
+                                            userId = fbUser?.uid ?: email,
+                                            email = fbUser?.email ?: email,
+                                            name = fbUser?.displayName ?: displayName,
+                                            photoUrl = fbUser?.photoUrl?.toString() ?: photoUrl
+                                        )
+                                    }
+                            } catch (e: Exception) {
+                                // Fallback to local profile saving
+                                saveGoogleProfile(context, email, email, displayName, photoUrl)
+                            }
+                        } else {
+                            saveGoogleProfile(context, email, email, displayName, photoUrl)
+                        }
+
+                        isAuthenticating = false
+                        authenticated = true
+                        onSuccess()
+                        return@launch
                     }
+                }
+            } catch (e: Exception) {
+                // Fallback to automatic account resolution below
+            }
 
-                    saveGoogleProfile(context, subId, email, displayName, photoUrl)
+            if (!authenticated) {
+                val account = fetchDeviceGoogleAccount(context)
+                if (account != null) {
+                    val (email, name) = account
+                    saveGoogleProfile(context, email, email, name, "")
                     isAuthenticating = false
                     onSuccess()
                 } else {
                     isAuthenticating = false
-                    onFailure("Received invalid credential type from Google")
+                    onFailure("No Google accounts found on this device. Please sign in to a Google account in Settings.")
                 }
-            } catch (e: GetCredentialCancellationException) {
-                isAuthenticating = false
-                onFailure("Sign-in cancelled")
-            } catch (e: GetCredentialUnsupportedException) {
-                isAuthenticating = false
-                onFailure("Google Play Services or Credential Manager is not supported on this device")
-            } catch (e: GetCredentialException) {
-                isAuthenticating = false
-                val msg = e.message ?: "Authentication failed"
-                if (msg.contains("No credential", ignoreCase = true)) {
-                    onFailure("No Google accounts found or Google Play Services is outdated")
-                } else {
-                    onFailure(msg)
-                }
-            } catch (e: Exception) {
-                isAuthenticating = false
-                onFailure(e.localizedMessage ?: "An unexpected error occurred during Google Sign-In")
             }
         }
     }
@@ -343,6 +537,115 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         }
     }
 
+    fun loginWithFirebaseEmail(
+        context: android.content.Context,
+        email: String,
+        pass: String,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        if (email.isBlank() || pass.isBlank()) {
+            onFailure("Please enter both email and password.")
+            return
+        }
+        isAuthenticating = true
+        try {
+            FirebaseAuth.getInstance().signInWithEmailAndPassword(email.trim(), pass)
+                .addOnSuccessListener { result ->
+                    isAuthenticating = false
+                    val firebaseUser = result.user
+                    val userEmail = firebaseUser?.email ?: email.trim()
+                    val displayName = firebaseUser?.displayName?.takeIf { it.isNotBlank() }
+                        ?: userEmail.substringBefore("@").replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                    val photoUrl = firebaseUser?.photoUrl?.toString() ?: ""
+                    
+                    saveGoogleProfile(
+                        context = context,
+                        userId = firebaseUser?.uid ?: userEmail,
+                        email = userEmail,
+                        name = displayName,
+                        photoUrl = photoUrl
+                    )
+                    onSuccess()
+                }
+                .addOnFailureListener { e ->
+                    isAuthenticating = false
+                    onFailure(e.localizedMessage ?: "Firebase Sign In failed.")
+                }
+        } catch (e: Exception) {
+            isAuthenticating = false
+            onFailure(e.localizedMessage ?: "Firebase Authentication service unavailable.")
+        }
+    }
+
+    fun signUpWithFirebaseEmail(
+        context: android.content.Context,
+        email: String,
+        pass: String,
+        name: String,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        if (email.isBlank() || pass.length < 6) {
+            onFailure("Please enter a valid email and a password with at least 6 characters.")
+            return
+        }
+        isAuthenticating = true
+        try {
+            FirebaseAuth.getInstance().createUserWithEmailAndPassword(email.trim(), pass)
+                .addOnSuccessListener { result ->
+                    val firebaseUser = result.user
+                    val displayName = if (name.isNotBlank()) name.trim() else email.substringBefore("@")
+                    val profileUpdates = UserProfileChangeRequest.Builder()
+                        .setDisplayName(displayName)
+                        .build()
+                    firebaseUser?.updateProfile(profileUpdates)
+                    
+                    isAuthenticating = false
+                    saveGoogleProfile(
+                        context = context,
+                        userId = firebaseUser?.uid ?: email.trim(),
+                        email = firebaseUser?.email ?: email.trim(),
+                        name = displayName,
+                        photoUrl = ""
+                    )
+                    onSuccess()
+                }
+                .addOnFailureListener { e ->
+                    isAuthenticating = false
+                    onFailure(e.localizedMessage ?: "Firebase Account Creation failed.")
+                }
+        } catch (e: Exception) {
+            isAuthenticating = false
+            onFailure(e.localizedMessage ?: "Firebase Authentication service unavailable.")
+        }
+    }
+
+    fun loginAsGuestFirebase(
+        context: android.content.Context,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        isAuthenticating = true
+        try {
+            FirebaseAuth.getInstance().signInAnonymously()
+                .addOnSuccessListener { result ->
+                    isAuthenticating = false
+                    loginAsGuest(context)
+                    onSuccess()
+                }
+                .addOnFailureListener {
+                    isAuthenticating = false
+                    loginAsGuest(context)
+                    onSuccess()
+                }
+        } catch (e: Exception) {
+            isAuthenticating = false
+            loginAsGuest(context)
+            onSuccess()
+        }
+    }
+
     fun loginAsGuest(context: android.content.Context) {
         isLoggedIn = true
         loggedInEmail = "guest@jagr.app"
@@ -366,7 +669,14 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
         loginType = ""
         googleUserId = ""
         googleProfilePictureUrl = ""
+        customProfilePictureUri = ""
         
+        try {
+            FirebaseAuth.getInstance().signOut()
+        } catch (e: Exception) {
+            // Ignore sign out exception
+        }
+
         viewModelScope.launch {
             try {
                 val credentialManager = CredentialManager.create(context)
@@ -392,7 +702,13 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     var reflectionReminderTime by mutableStateOf("10:00 PM")
 
     // Daily Reflection Form States
-    var selectedMoodIndex by mutableStateOf(-1) // 0 to 6 for 😄, 😊, 😐, 😟, 😡, 😴, 😢
+    var showDailyLogScreen by mutableStateOf(false)
+    var isDailyLogReadOnly by mutableStateOf(false)
+    var isTodayLogSubmitted by mutableStateOf(false)
+    var todaySubmissionTimestamp by mutableStateOf<Long?>(null)
+    var urgeResisted by mutableStateOf("") // Options: "Yes", "No", ""
+
+    var selectedTrigger by mutableStateOf("") // Options: Social Media, Porn, Stress, Boredom, Loneliness, Anxiety, Relationship, Other
     var journalNotes by mutableStateOf("")
 
     // Form expanded states
@@ -400,6 +716,7 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     var pornExpanded by mutableStateOf(false)
     var thoughtsExpanded by mutableStateOf(false)
     var urgeExpanded by mutableStateOf(false)
+    var triggerQuestionExpanded by mutableStateOf(false)
 
     // Form answers & sub-selections
     var masturbationSlipped by mutableStateOf("") // Default unselected
@@ -462,9 +779,13 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
     var hasLoadedTodayLog = false
 
     fun loadTodayLog(records: List<HabitRecord>) {
+        val todayRecords = records.filter { isToday(it.timestamp) }
+        val submission = todayRecords.find { it.activityType == "ReflectionSubmission" }
+        isTodayLogSubmitted = submission != null
+        todaySubmissionTimestamp = submission?.timestamp
+
         if (hasLoadedTodayLog || records.isEmpty()) return
         
-        val todayRecords = records.filter { isToday(it.timestamp) }
         if (todayRecords.isEmpty()) {
             hasLoadedTodayLog = true
             return
@@ -495,9 +816,28 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
             urgeCount = if (urgeRecord.count > 0) urgeRecord.count else 1
         }
 
-        val moodRecord = todayRecords.find { it.activityType == "Mood" }
-        if (moodRecord != null) {
-            selectedMoodIndex = moodRecord.count
+        val urgeResistedRecord = todayRecords.find { it.activityType == "UrgeResisted" }
+        if (urgeResistedRecord != null) {
+            urgeResisted = if (urgeResistedRecord.count > 0) "Yes" else "No"
+        } else {
+            urgeResisted = if (urgeSlipped == "Yes") "Yes" else ""
+        }
+
+        val todayTriggerRecord = todayRecords.find { 
+            it.activityType.startsWith("Trigger:") && 
+            it.activityType.substringAfter("Trigger:") in listOf("Social Media", "Porn", "Stress", "Boredom", "Loneliness", "Anxiety", "Relationship", "Other")
+        }
+        if (todayTriggerRecord != null) {
+            selectedTrigger = todayTriggerRecord.activityType.substringAfter("Trigger:")
+        } else {
+            selectedTrigger = ""
+        }
+
+        val journalRecord = todayRecords.find { it.activityType.startsWith("JournalNote:") }
+        if (journalRecord != null) {
+            journalNotes = journalRecord.activityType.substringAfter("JournalNote:")
+        } else {
+            journalNotes = ""
         }
 
         val todayTriggers = todayRecords
@@ -596,13 +936,27 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
                         durationMinutes = 0
                     ))
                 }
+                
+                val resistedVal = if (urgeResisted == "Yes") 1 else 0
+                repository.insert(HabitRecord(
+                    activityType = "UrgeResisted",
+                    count = resistedVal,
+                    durationMinutes = 0
+                ))
             }
 
-            // Save Mood as a special record (index stored in count)
-            if (selectedMoodIndex >= 0) {
+            // Save ReflectionSubmission record (critical for tracking active time and reflection days)
+            repository.insert(HabitRecord(
+                activityType = "ReflectionSubmission",
+                count = 1,
+                durationMinutes = 0
+            ))
+
+            // Save Biggest Trigger record if one was selected
+            if (selectedTrigger.isNotEmpty()) {
                 repository.insert(HabitRecord(
-                    activityType = "Mood",
-                    count = selectedMoodIndex,
+                    activityType = "Trigger:$selectedTrigger",
+                    count = 1,
                     durationMinutes = 0
                 ))
             }
@@ -610,14 +964,114 @@ class HabitViewModel(private val repository: HabitRepository) : ViewModel() {
             // Save Journal Notes if present
             if (journalNotes.isNotEmpty()) {
                 repository.insert(HabitRecord(
-                    activityType = "JournalNote",
+                    activityType = "JournalNote:$journalNotes",
                     count = 0,
                     durationMinutes = 0
                 ))
             }
 
+            isTodayLogSubmitted = true
+            todaySubmissionTimestamp = System.currentTimeMillis()
             hasLoadedTodayLog = true
         }
     }
+
+    // App Usage & Screen Time State
+    var showAppUsageScreen by mutableStateOf(false)
+    var selectedUsageTimeFrame by mutableStateOf(UsageTimeFrame.TODAY)
+    var appUsageSummaryState by mutableStateOf<AppUsageSummary?>(null)
+    var appDailyLimits by mutableStateOf<Map<String, Int>>(emptyMap())
+
+    fun refreshAppUsageSummary(context: Context) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val summary = AppUsageTracker.getUsageSummary(context, selectedUsageTimeFrame)
+            val prefs = context.getSharedPreferences("jagr_app_limits", Context.MODE_PRIVATE)
+            val limits = prefs.all.mapValues { (_, value) -> (value as? Int) ?: 0 }
+            
+            val updatedTopApps = summary.topApps.map { app ->
+                val limit = limits[app.packageName] ?: 0
+                app.copy(dailyLimitMinutes = limit)
+            }
+            
+            val updatedSummary = summary.copy(topApps = updatedTopApps)
+            
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                appUsageSummaryState = updatedSummary
+                appDailyLimits = limits
+            }
+        }
+    }
+
+    fun setAppDailyLimit(context: Context, packageName: String, limitMinutes: Int) {
+        val prefs = context.getSharedPreferences("jagr_app_limits", Context.MODE_PRIVATE)
+        prefs.edit().putInt(packageName, limitMinutes).apply()
+        refreshAppUsageSummary(context)
+    }
+
+    // Browser & Adult Content Protection State
+    var isAccessibilityGuardActive by mutableStateOf(false)
+    var isBrowserProtectionEnabled by mutableStateOf(true)
+    var isHighSensitivityMode by mutableStateOf(true)
+    var adultIncidentLogs by mutableStateOf<List<AdultIncident>>(emptyList())
+    var customBlockedDomainsList by mutableStateOf<Set<String>>(emptySet())
+
+    fun refreshBrowserProtectionStatus(context: Context) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val isAccEnabled = AdultContentGuardManager.isAccessibilityServiceEnabled(context)
+            val isProtEnabled = AdultContentGuardManager.isProtectionEnabled(context)
+            val isHigh = AdultContentGuardManager.isHighSensitivity(context)
+            val incidents = AdultContentGuardManager.getIncidents(context)
+            val customDomains = AdultContentGuardManager.getCustomBlockedDomains(context)
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                isAccessibilityGuardActive = isAccEnabled
+                isBrowserProtectionEnabled = isProtEnabled
+                isHighSensitivityMode = isHigh
+                adultIncidentLogs = incidents
+                customBlockedDomainsList = customDomains
+            }
+        }
+    }
+
+    fun toggleBrowserProtection(context: Context, enabled: Boolean) {
+        AdultContentGuardManager.setProtectionEnabled(context, enabled)
+        refreshBrowserProtectionStatus(context)
+    }
+
+    fun toggleHighSensitivity(context: Context, high: Boolean) {
+        AdultContentGuardManager.setHighSensitivity(context, high)
+        refreshBrowserProtectionStatus(context)
+    }
+
+    fun addCustomBlockedDomain(context: Context, domain: String) {
+        AdultContentGuardManager.addCustomBlockedDomain(context, domain)
+        refreshBrowserProtectionStatus(context)
+    }
+
+    fun removeCustomBlockedDomain(context: Context, domain: String) {
+        AdultContentGuardManager.removeCustomBlockedDomain(context, domain)
+        refreshBrowserProtectionStatus(context)
+    }
+
+    fun clearAdultIncidents(context: Context) {
+        AdultContentGuardManager.clearIncidents(context)
+        refreshBrowserProtectionStatus(context)
+    }
+
+    fun testAdultUrlDetection(context: Context, input: String): Pair<Boolean, String>? {
+        val result = AdultContentGuardManager.checkUrlOrQueryForAdultContent(context, input)
+        if (result != null && result.first) {
+            AdultContentGuardManager.recordIncident(
+                context = context,
+                browserPackage = "com.example.test",
+                browserName = "Test Simulator",
+                detectedUrlOrTerm = input,
+                matchedPattern = result.second
+            )
+            refreshBrowserProtectionStatus(context)
+        }
+        return result
+    }
 }
+
 
